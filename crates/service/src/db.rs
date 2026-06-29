@@ -1,5 +1,5 @@
 use crate::RunCreateRequest;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,17 @@ use std::{
 
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryRecord {
+    pub id: String,
+    pub label: String,
+    pub root_path: String,
+    pub available: bool,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +37,9 @@ pub struct RunRecord {
     pub protected_paths: Vec<String>,
     pub validation_output: Option<String>,
     pub error: Option<String>,
+    pub repository_id: Option<String>,
+    pub repository_root_path: Option<String>,
+    pub target_relative_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +85,14 @@ impl Database {
                 error TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS repositories (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                root_path TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS patches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
@@ -91,29 +113,128 @@ impl Database {
             );
             "#,
         )?;
+        ensure_column(&conn, "runs", "repository_id", "TEXT")?;
+        ensure_column(&conn, "runs", "repository_root_path", "TEXT")?;
+        ensure_column(&conn, "runs", "target_relative_path", "TEXT")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
+    pub fn upsert_repository(
+        &self,
+        id: &str,
+        label: &str,
+        root_path: &str,
+    ) -> Result<RepositoryRecord> {
+        if let Some(existing) = self.repository_by_root(root_path)? {
+            return Ok(existing);
+        }
+
+        let now = Utc::now().to_rfc3339();
+        self.conn()?.execute(
+            r#"
+            INSERT INTO repositories (id, label, root_path, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?4)
+            "#,
+            params![id, label, root_path, now],
+        )?;
+        self.get_repository(id)?
+            .ok_or_else(|| anyhow!("repository was not found after insert"))
+    }
+
+    pub fn list_repositories(&self) -> Result<Vec<RepositoryRecord>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, label, root_path, created_at, updated_at
+            FROM repositories
+            ORDER BY updated_at DESC, label ASC
+            "#,
+        )?;
+        let rows = stmt.query_map([], row_to_repository)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_repository(&self, id: &str) -> Result<Option<RepositoryRecord>> {
+        self.conn()?
+            .query_row(
+                r#"
+                SELECT id, label, root_path, created_at, updated_at
+                FROM repositories
+                WHERE id = ?1
+                "#,
+                params![id],
+                row_to_repository,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn update_repository_label(
+        &self,
+        id: &str,
+        label: &str,
+    ) -> Result<Option<RepositoryRecord>> {
+        let updated = self.conn()?.execute(
+            "UPDATE repositories SET label = ?1, updated_at = ?2 WHERE id = ?3",
+            params![label, Utc::now().to_rfc3339(), id],
+        )?;
+        if updated == 0 {
+            return Ok(None);
+        }
+        self.get_repository(id)
+    }
+
+    pub fn delete_repository(&self, id: &str) -> Result<bool> {
+        let deleted = self
+            .conn()?
+            .execute("DELETE FROM repositories WHERE id = ?1", params![id])?;
+        Ok(deleted > 0)
+    }
+
+    fn repository_by_root(&self, root_path: &str) -> Result<Option<RepositoryRecord>> {
+        self.conn()?
+            .query_row(
+                r#"
+                SELECT id, label, root_path, created_at, updated_at
+                FROM repositories
+                WHERE root_path = ?1
+                "#,
+                params![root_path],
+                row_to_repository,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn insert_run(&self, id: &str, request: &RunCreateRequest) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let target_path = request
+            .target_path
+            .as_deref()
+            .ok_or_else(|| anyhow!("run target path was not resolved"))?;
         let conn = self.conn()?;
         conn.execute(
             r#"
             INSERT INTO runs (
                 id, target_path, status, created_at, updated_at, rules_json,
-                test_file_mode, validation_json, protected_json
-            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7)
+                test_file_mode, validation_json, protected_json, repository_id,
+                repository_root_path, target_relative_path
+            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 id,
-                request.target_path,
+                target_path,
                 now,
                 serde_json::to_string(&request.rules)?,
                 serde_json::to_string(&request.test_file_mode.unwrap_or_default())?,
                 serde_json::to_string(&request.validation_commands)?,
                 serde_json::to_string(&request.protected_paths)?,
+                request.repository_id,
+                request.repository_root_path,
+                request.target_relative_path,
             ],
         )?;
         drop(conn);
@@ -146,12 +267,31 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_runs(&self) -> Result<Vec<RunRecord>> {
+    pub fn list_runs(&self, repository_id: Option<&str>) -> Result<Vec<RunRecord>> {
         let conn = self.conn()?;
+        if let Some(repository_id) = repository_id {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, target_path, status, created_at, updated_at, rules_json,
+                       test_file_mode, validation_json, protected_json, validation_output, error,
+                       repository_id, repository_root_path, target_relative_path
+                FROM runs
+                WHERE repository_id = ?1
+                ORDER BY created_at DESC
+                LIMIT 100
+                "#,
+            )?;
+            let rows = stmt.query_map(params![repository_id], row_to_run)?;
+            return rows
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(Into::into);
+        }
+
         let mut stmt = conn.prepare(
             r#"
             SELECT id, target_path, status, created_at, updated_at, rules_json,
-                   test_file_mode, validation_json, protected_json, validation_output, error
+                   test_file_mode, validation_json, protected_json, validation_output, error,
+                   repository_id, repository_root_path, target_relative_path
             FROM runs
             ORDER BY created_at DESC
             LIMIT 100
@@ -167,7 +307,8 @@ impl Database {
             .query_row(
                 r#"
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
-                       test_file_mode, validation_json, protected_json, validation_output, error
+                       test_file_mode, validation_json, protected_json, validation_output, error,
+                       repository_id, repository_root_path, target_relative_path
                 FROM runs
                 WHERE id = ?1
                 "#,
@@ -261,6 +402,36 @@ impl Database {
     }
 }
 
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )?;
+    Ok(())
+}
+
+fn row_to_repository(row: &rusqlite::Row<'_>) -> rusqlite::Result<RepositoryRecord> {
+    let root_path: String = row.get(2)?;
+    let available = PathBuf::from(&root_path).is_dir();
+
+    Ok(RepositoryRecord {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        root_path,
+        available,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+    })
+}
+
 fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     let rules_json: String = row.get(5)?;
     let test_file_mode_json: String = row.get(6)?;
@@ -280,5 +451,8 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
         protected_paths: serde_json::from_str(&protected_json).unwrap_or_default(),
         validation_output: row.get(9)?,
         error: row.get(10)?,
+        repository_id: row.get(11)?,
+        repository_root_path: row.get(12)?,
+        target_relative_path: row.get(13)?,
     })
 }

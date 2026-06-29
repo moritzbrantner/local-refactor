@@ -39,7 +39,17 @@ Open `http://127.0.0.1:5173`.
 
 ## Run A Refactor
 
-Use an absolute target path. By default, files under that target directory are mutable, tests are read-only, parent/sibling paths are read-only, and common build outputs/lockfiles are protected.
+In the browser UI:
+
+1. Add a local Git repository as a Repository Source. If you enter a subfolder inside a Git repository, local-refactor saves the repository root.
+2. Select the repository.
+3. Select the repository root or a subfolder as the Target Folder.
+4. Configure rules, test file mode, validation commands, and protected paths.
+5. Start the run.
+
+By default, files under the selected Target Folder are mutable, tests are read-only, parent/sibling paths are read-only, and common build outputs/lockfiles are protected. Repository Sources are only local-refactor list entries; removing one from the UI does not delete files or existing run history.
+
+The backend still accepts a legacy absolute `targetPath` for direct API callers. Runs created through the browser UI submit `repositoryId` and `targetRelativePath`, and the service stores both that repository context and the resolved absolute target path.
 
 The implemented write rule is `simplify-conditional`, which rewrites simple boolean-return conditionals such as:
 
@@ -87,4 +97,3 @@ Run settings from the web UI override global and project settings.
 ```sh
 bun run check
 ```
-

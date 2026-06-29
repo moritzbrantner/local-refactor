@@ -10,7 +10,7 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Sse},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use db::{Database, PatchRecord};
@@ -29,6 +29,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tokio::process::Command;
 use tokio::sync::broadcast;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
@@ -44,7 +45,14 @@ struct AppState {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunCreateRequest {
-    target_path: String,
+    #[serde(default)]
+    target_path: Option<String>,
+    #[serde(default)]
+    repository_id: Option<String>,
+    #[serde(default)]
+    repository_root_path: Option<String>,
+    #[serde(default)]
+    target_relative_path: Option<String>,
     #[serde(default)]
     rules: Vec<String>,
     #[serde(default)]
@@ -65,6 +73,34 @@ struct EffectiveConfigQuery {
     target_path: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListRunsQuery {
+    #[serde(default)]
+    repository_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryCreateRequest {
+    path: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryUpdateRequest {
+    label: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderChildrenQuery {
+    #[serde(default)]
+    path: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HealthResponse {
@@ -81,6 +117,21 @@ struct RulesResponse<'a> {
 #[serde(rename_all = "camelCase")]
 struct RunCreatedResponse {
     id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderChildrenResponse {
+    repository_id: String,
+    path: String,
+    entries: Vec<FolderEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderEntry {
+    name: String,
+    relative_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +176,15 @@ async fn main() -> Result<()> {
         .route("/api/rules", get(rules))
         .route("/api/models", get(models))
         .route("/api/config/effective", get(effective_config))
+        .route(
+            "/api/repositories",
+            get(list_repositories).post(create_repository),
+        )
+        .route(
+            "/api/repositories/{id}",
+            patch(update_repository).delete(delete_repository),
+        )
+        .route("/api/repositories/{id}/folders", get(repository_folders))
         .route("/api/analyze", post(analyze))
         .route("/api/runs", post(create_run).get(list_runs))
         .route("/api/runs/{id}", get(get_run))
@@ -179,11 +239,153 @@ async fn effective_config(Query(query): Query<EffectiveConfigQuery>) -> impl Int
     }
 }
 
+async fn list_repositories(State(state): State<AppState>) -> impl IntoResponse {
+    match state.db.list_repositories() {
+        Ok(repositories) => Json(repositories).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn create_repository(
+    State(state): State<AppState>,
+    Json(request): Json<RepositoryCreateRequest>,
+) -> impl IntoResponse {
+    let root = match git_root_for(&request.path).await {
+        Ok(root) => root,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    let label = request
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| repository_label_from_root(&root));
+    let root_path = root.to_string_lossy().to_string();
+
+    match state
+        .db
+        .upsert_repository(&Uuid::new_v4().to_string(), &label, &root_path)
+    {
+        Ok(repository) => Json(repository).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn update_repository(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<RepositoryUpdateRequest>,
+) -> impl IntoResponse {
+    let label = request.label.trim();
+    if label.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "repository label cannot be empty" })),
+        )
+            .into_response();
+    }
+
+    match state.db.update_repository_label(&id, label) {
+        Ok(Some(repository)) => Json(repository).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_repository(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.delete_repository(&id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn repository_folders(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<FolderChildrenQuery>,
+) -> impl IntoResponse {
+    let repository = match state.db.get_repository(&id) {
+        Ok(Some(repository)) => repository,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    let requested_path = query.path.as_deref().unwrap_or(".");
+    let root = match std::fs::canonicalize(&repository.root_path) {
+        Ok(root) => root,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+    let folder = match resolve_repository_folder(&root, requested_path) {
+        Ok(folder) => folder,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    match folder_entries(&root, &folder) {
+        Ok(entries) => Json(FolderChildrenResponse {
+            repository_id: id,
+            path: relative_path_from_root(&root, &folder),
+            entries,
+        })
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn analyze(
     State(state): State<AppState>,
     Json(request): Json<RunCreateRequest>,
 ) -> impl IntoResponse {
-    let request = match normalize_request(request) {
+    let request = match normalize_request(&state.db, request) {
         Ok(request) => request,
         Err(error) => {
             return (
@@ -226,7 +428,7 @@ async fn create_run(
     Json(request): Json<RunCreateRequest>,
 ) -> impl IntoResponse {
     let id = Uuid::new_v4().to_string();
-    let request = match normalize_request(request) {
+    let request = match normalize_request(&state.db, request) {
         Ok(request) => request,
         Err(error) => {
             return (
@@ -256,8 +458,11 @@ async fn create_run(
     }
 }
 
-async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
-    match state.db.list_runs() {
+async fn list_runs(
+    State(state): State<AppState>,
+    Query(query): Query<ListRunsQuery>,
+) -> impl IntoResponse {
+    match state.db.list_runs(query.repository_id.as_deref()) {
         Ok(runs) => Json(runs).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -409,7 +614,7 @@ async fn run_job(state: AppState, id: String, request: RunCreateRequest) -> Resu
     apply_analyzer_edits(&state, &id, &policy, analyzer_response)?;
 
     transition(&state, &id, "validating", "Running validation checks")?;
-    let validation_dir = validation_root(&request.target_path);
+    let validation_dir = validation_root(request_target_path(&request)?);
     let validation_result =
         validation::run_commands(&validation_dir, &request.validation_commands).await?;
     state
@@ -503,8 +708,9 @@ fn apply_analyzer_edits(
 }
 
 fn prepare_analyzer_request(request: &RunCreateRequest) -> Result<(PathPolicy, Vec<String>)> {
-    let target_path = std::fs::canonicalize(&request.target_path)
-        .with_context(|| format!("target path does not exist: {}", request.target_path))?;
+    let target_path = request_target_path(request)?;
+    let target_path = std::fs::canonicalize(target_path)
+        .with_context(|| format!("target path does not exist: {target_path}"))?;
     let target_root = if target_path.is_file() {
         target_path
             .parent()
@@ -545,7 +751,8 @@ fn effective_rules(request: &RunCreateRequest) -> Vec<String> {
         .collect()
 }
 
-fn normalize_request(mut request: RunCreateRequest) -> Result<RunCreateRequest> {
+fn normalize_request(db: &Database, mut request: RunCreateRequest) -> Result<RunCreateRequest> {
+    resolve_request_target(db, &mut request)?;
     let run_layer = ConfigLayer {
         rules: if request.rules.is_empty() {
             None
@@ -565,12 +772,48 @@ fn normalize_request(mut request: RunCreateRequest) -> Result<RunCreateRequest> 
         test_file_mode: request.test_file_mode,
     };
 
-    let config = effective_config_for(Path::new(&request.target_path), run_layer)?;
+    let target_path = request_target_path(&request)?;
+    let config = effective_config_for(Path::new(target_path), run_layer)?;
     request.rules = config.rules;
     request.protected_paths = config.protected_paths;
     request.validation_commands = config.validation_commands;
     request.test_file_mode = Some(config.test_file_mode);
     Ok(request)
+}
+
+fn resolve_request_target(db: &Database, request: &mut RunCreateRequest) -> Result<()> {
+    if let Some(repository_id) = request.repository_id.as_deref() {
+        let repository = db
+            .get_repository(repository_id)?
+            .ok_or_else(|| anyhow!("repository source was not found"))?;
+        let relative = request
+            .target_relative_path
+            .as_deref()
+            .ok_or_else(|| anyhow!("target relative path is required with repositoryId"))?;
+        let root = std::fs::canonicalize(&repository.root_path)
+            .with_context(|| format!("repository path is unavailable: {}", repository.root_path))?;
+        let target = resolve_repository_folder(&root, relative)?;
+        request.target_path = Some(target.to_string_lossy().to_string());
+        request.repository_root_path = Some(root.to_string_lossy().to_string());
+        request.target_relative_path = Some(relative_path_from_root(&root, &target));
+        return Ok(());
+    }
+
+    let target_path = request
+        .target_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("targetPath is required"))?;
+    request.target_path = Some(target_path.to_string());
+    Ok(())
+}
+
+fn request_target_path(request: &RunCreateRequest) -> Result<&str> {
+    request
+        .target_path
+        .as_deref()
+        .ok_or_else(|| anyhow!("run target path was not resolved"))
 }
 
 fn effective_config_for(target_path: &Path, run_layer: ConfigLayer) -> Result<EffectiveConfig> {
@@ -621,6 +864,112 @@ fn revert_patches(state: &AppState, run_id: &str) -> Result<()> {
     Ok(())
 }
 
+async fn git_root_for(path: &str) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .output()
+        .await
+        .with_context(|| "failed to run git")?;
+
+    if !output.status.success() {
+        return Err(anyhow!("path is not inside a Git work tree"));
+    }
+
+    let root = String::from_utf8(output.stdout)
+        .map_err(|_| anyhow!("git returned a non-UTF-8 repository path"))?;
+    let root = root.trim();
+    if root.is_empty() {
+        return Err(anyhow!("git returned an empty repository path"));
+    }
+
+    std::fs::canonicalize(root)
+        .with_context(|| format!("failed to canonicalize Git repository root: {root}"))
+}
+
+fn repository_label_from_root(root: &Path) -> String {
+    root.file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Repository")
+        .to_string()
+}
+
+fn resolve_repository_folder(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    let trimmed = relative_path.trim();
+    let relative = Path::new(trimmed);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(anyhow!(
+            "repository folder must be a relative path inside the repository root"
+        ));
+    }
+
+    let candidate = if trimmed.is_empty() || trimmed == "." {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    };
+    let folder = std::fs::canonicalize(&candidate)
+        .with_context(|| format!("repository folder does not exist: {}", candidate.display()))?;
+    if !folder.starts_with(root) {
+        return Err(anyhow!(
+            "repository folder must stay inside the repository root"
+        ));
+    }
+    if !folder.is_dir() {
+        return Err(anyhow!("repository target must be a directory"));
+    }
+    Ok(folder)
+}
+
+fn folder_entries(root: &Path, folder: &Path) -> Result<Vec<FolderEntry>> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(folder)
+        .with_context(|| format!("failed to read folder {}", folder.display()))?
+    {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_hidden_picker_dir(&name) {
+            continue;
+        }
+
+        let path = entry.path();
+        entries.push(FolderEntry {
+            name,
+            relative_path: relative_path_from_root(root, &path),
+        });
+    }
+
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(entries)
+}
+
+fn relative_path_from_root(root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    if relative.as_os_str().is_empty() {
+        return ".".to_string();
+    }
+    relative.to_string_lossy().replace('\\', "/")
+}
+
+fn is_hidden_picker_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "node_modules" | "dist" | "build" | ".next" | "coverage"
+    )
+}
+
 fn default_db_path() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("LOCAL_REFACTOR_DB") {
         return Ok(PathBuf::from(path));
@@ -652,4 +1001,199 @@ fn find_analyzer_script() -> Result<PathBuf> {
     }
 
     Err(anyhow!("could not find TypeScript analyzer worker"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+    use tempfile::TempDir;
+
+    fn temp_db() -> (TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("local-refactor.sqlite")).unwrap();
+        (dir, db)
+    }
+
+    fn init_git_repo() -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let status = StdCommand::new("git")
+            .arg("init")
+            .arg(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        dir
+    }
+
+    #[tokio::test]
+    async fn git_root_normalizes_subfolder_to_repository_root() {
+        let repo = init_git_repo();
+        let src = repo.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let root = git_root_for(src.to_str().unwrap()).await.unwrap();
+
+        assert_eq!(root, std::fs::canonicalize(repo.path()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn git_root_rejects_non_git_paths() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = git_root_for(dir.path().to_str().unwrap())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Git work tree"));
+    }
+
+    #[test]
+    fn upserting_repository_keeps_one_record_per_root_path() {
+        let (_dir, db) = temp_db();
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().to_string();
+
+        let first = db.upsert_repository("repo-1", "First", &root_path).unwrap();
+        let second = db
+            .upsert_repository("repo-2", "Second", &root_path)
+            .unwrap();
+        let repositories = db.list_repositories().unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].label, "First");
+    }
+
+    #[test]
+    fn deleting_repository_source_does_not_delete_run_history() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        let src = repo.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+
+        let request = RunCreateRequest {
+            target_path: Some(src.to_string_lossy().to_string()),
+            repository_id: Some(repository.id.clone()),
+            repository_root_path: Some(repo.path().to_string_lossy().to_string()),
+            target_relative_path: Some("src".to_string()),
+            rules: vec!["simplify-conditional".to_string()],
+            model: None,
+            test_file_mode: Some(TestFileMode::ReadOnly),
+            validation_commands: Vec::new(),
+            protected_paths: Vec::new(),
+            repair_budget: 2,
+        };
+        db.insert_run("run-1", &request).unwrap();
+
+        assert!(db.delete_repository(&repository.id).unwrap());
+        let run = db.get_run("run-1").unwrap().unwrap();
+
+        assert_eq!(run.repository_id.as_deref(), Some(repository.id.as_str()));
+        assert_eq!(run.target_relative_path.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn repository_mode_request_resolves_and_stores_absolute_target() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        let src = repo.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+
+        let request = normalize_request(
+            &db,
+            RunCreateRequest {
+                target_path: None,
+                repository_id: Some(repository.id.clone()),
+                repository_root_path: None,
+                target_relative_path: Some("src".to_string()),
+                rules: Vec::new(),
+                model: None,
+                test_file_mode: None,
+                validation_commands: Vec::new(),
+                protected_paths: Vec::new(),
+                repair_budget: 2,
+            },
+        )
+        .unwrap();
+        db.insert_run("run-1", &request).unwrap();
+        let run = db.get_run("run-1").unwrap().unwrap();
+
+        assert_eq!(
+            request.target_path.as_deref(),
+            Some(src.canonicalize().unwrap().to_string_lossy().as_ref())
+        );
+        assert_eq!(run.repository_id.as_deref(), Some(repository.id.as_str()));
+        assert_eq!(
+            run.repository_root_path.as_deref(),
+            Some(
+                repo.path()
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        assert_eq!(run.target_relative_path.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn repository_folder_resolution_rejects_traversal_syntax() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        let root = repo.path().canonicalize().unwrap();
+
+        assert!(resolve_repository_folder(&root, "src/..").is_err());
+        assert!(resolve_repository_folder(&root, "../outside").is_err());
+        assert!(resolve_repository_folder(&root, "/tmp").is_err());
+    }
+
+    #[test]
+    fn folder_entries_hide_noisy_directories() {
+        let repo = tempfile::tempdir().unwrap();
+        for name in [
+            ".git",
+            "node_modules",
+            "dist",
+            "build",
+            ".next",
+            "coverage",
+            "src",
+        ] {
+            std::fs::create_dir_all(repo.path().join(name)).unwrap();
+        }
+        let root = repo.path().canonicalize().unwrap();
+
+        let entries = folder_entries(&root, &root).unwrap();
+        let names = entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["src"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_entries_do_not_follow_symlink_directories() {
+        let repo = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("linked")).unwrap();
+        let root = repo.path().canonicalize().unwrap();
+
+        let entries = folder_entries(&root, &root).unwrap();
+        let names = entries
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["src"]);
+    }
 }

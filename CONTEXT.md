@@ -28,6 +28,14 @@ _Avoid_: Workspace, project
 Files outside the mutable scope that the agent may inspect but not modify unless explicitly included.
 _Avoid_: Context files
 
+**Repository Source**:
+A saved local Git repository root that local-refactor can offer as a source for new runs. Repository Sources are user-managed entries and do not imply ownership of the filesystem repository.
+_Avoid_: Workspace, project, repo list item
+
+**Target Folder**:
+The repository root or subdirectory selected from a Repository Source as the target for a Run. The Target Folder becomes the Run's Mutable Scope unless path policy rules make individual files read-only or protected.
+_Avoid_: Path suffix, folder choice
+
 **Protected Path**:
 A file or glob that is never writable during a run, even if it is inside mutable scope.
 _Avoid_: Ignore path
@@ -43,4 +51,3 @@ _Avoid_: Backup
 **Validation Check**:
 A configured command used to verify that a run preserved behavior.
 _Avoid_: Test command
-

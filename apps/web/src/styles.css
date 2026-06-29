@@ -21,6 +21,11 @@ textarea {
   font: inherit;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .app-shell {
   min-height: 100vh;
 }
@@ -53,7 +58,7 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(340px, 420px) minmax(280px, 360px) minmax(440px, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(280px, 380px) minmax(460px, 1fr);
   gap: 16px;
   padding: 16px;
 }
@@ -79,10 +84,15 @@ textarea {
   font-size: 16px;
 }
 
+.add-repository,
 .run-form {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.add-repository {
+  margin-bottom: 16px;
 }
 
 label,
@@ -109,9 +119,137 @@ textarea {
   resize: vertical;
 }
 
+.repository-list,
+.run-list,
 .rule-list {
   display: grid;
   gap: 8px;
+}
+
+.repository-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #dde4ea;
+  border-radius: 6px;
+  background: #fbfcfd;
+  padding: 8px;
+}
+
+.repository-row.selected {
+  border-color: #1f7a5a;
+  background: #f0faf5;
+}
+
+.repository-select {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.repository-path {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.repository-select input {
+  min-width: 0;
+  height: 34px;
+  font-weight: 700;
+}
+
+.unavailable {
+  width: max-content;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #8f1d14;
+  background: #fff5f3;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.selected-source,
+.target-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  border: 1px solid #e0e6eb;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.selected-source strong,
+.target-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.selected-source span,
+.target-summary span {
+  color: #697583;
+  font-size: 12px;
+}
+
+.folder-tree {
+  display: grid;
+  gap: 2px;
+}
+
+.folder-node {
+  min-width: 0;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  min-height: 34px;
+  gap: 2px;
+}
+
+.tree-toggle,
+.folder-select {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #27313b;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tree-toggle {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.folder-select {
+  min-width: 0;
+  height: 30px;
+  gap: 8px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.folder-select span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-select.selected {
+  color: #111827;
+  background: #dff3e9;
+  font-weight: 700;
 }
 
 .checkbox-row {
@@ -193,9 +331,29 @@ textarea {
   padding: 0;
 }
 
-.run-list {
+.runs-layout {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.2fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.history h3,
+.detail h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.detail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.detail-title h3 {
+  margin: 0;
 }
 
 .run-row {
@@ -209,6 +367,7 @@ textarea {
   border-radius: 6px;
   background: #fbfcfd;
   text-align: left;
+  cursor: pointer;
 }
 
 .run-row.selected {
@@ -336,10 +495,10 @@ pre {
 
 @media (max-width: 1180px) {
   .workspace {
-    grid-template-columns: minmax(320px, 420px) 1fr;
+    grid-template-columns: minmax(280px, 340px) 1fr;
   }
 
-  .detail {
+  .runs-panel {
     grid-column: 1 / -1;
   }
 }
@@ -349,8 +508,12 @@ pre {
     padding: 18px;
   }
 
-  .workspace {
+  .workspace,
+  .runs-layout {
     grid-template-columns: 1fr;
+  }
+
+  .workspace {
     padding: 10px;
   }
 
@@ -358,4 +521,3 @@ pre {
     grid-template-columns: 1fr;
   }
 }
-
