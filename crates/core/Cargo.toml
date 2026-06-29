@@ -1,0 +1,13 @@
+[package]
+name = "local-refactor-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+globset.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml = "0.8"
+walkdir.workspace = true

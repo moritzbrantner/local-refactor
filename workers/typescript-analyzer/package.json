@@ -1,0 +1,17 @@
+{
+  "name": "@local-refactor/typescript-analyzer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "check": "bun --bun src/main.ts --help"
+  },
+  "dependencies": {
+    "ts-morph": "^25.0.0",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14"
+  }
+}
+

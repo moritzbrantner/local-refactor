@@ -1,0 +1,10 @@
+/target/
+/node_modules/
+**/node_modules/
+**/dist/
+**/.tmp/
+*.tsbuildinfo
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+

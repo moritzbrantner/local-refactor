@@ -1,0 +1,17 @@
+{
+  "name": "local-refactor",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "workers/typescript-analyzer"
+  ],
+  "scripts": {
+    "dev:service": "cargo run -p local-refactor-service",
+    "dev:web": "bun run --cwd apps/web dev",
+    "check": "cargo test --workspace && bun run --cwd workers/typescript-analyzer test && bun run --cwd apps/web build"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14"
+  }
+}
