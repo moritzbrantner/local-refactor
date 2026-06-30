@@ -1,11 +1,12 @@
 mod analyzer;
 mod db;
 mod diff;
+mod edit_journal;
 mod model_provider;
 mod patch_plan;
 mod validation;
 
-use analyzer::{AnalyzerRequest, AnalyzerResponse};
+use analyzer::AnalyzerRequest;
 use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path as AxumPath, Query, State},
@@ -14,13 +15,13 @@ use axum::{
     routing::{get, patch, post},
     Json, Router,
 };
-use db::{PatchAction, PatchRecord};
+use edit_journal::JournaledEdit;
 use local_refactor_core::{
     config::{
         default_protected_paths, find_project_config, load_config_file, ConfigLayer,
         EffectiveConfig, TestFileMode,
     },
-    path_policy::{PathDecision, PathPolicy},
+    path_policy::PathPolicy,
     rules::{rule_by_id, Language, RuleExecutionKind, INITIAL_RULES},
 };
 use serde::{Deserialize, Serialize};
@@ -633,8 +634,8 @@ async fn revert_run(
     State(state): State<ServiceState>,
     AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
-    match revert_patches(&state, &id) {
-        Ok(()) => {
+    match edit_journal::revert_patches(&state.db, &id) {
+        Ok(_) => {
             let _ = transition(&state, &id, "reverted", "Run changes reverted");
             StatusCode::NO_CONTENT.into_response()
         }
@@ -837,7 +838,7 @@ async fn run_job_inner(
                 let analyzer_response = analyzer_response?;
 
                 let started = Instant::now();
-                let edit_result = apply_analyzer_edits(state, id, &policy, analyzer_response);
+                let edit_result = apply_analyzer_response(state, id, &policy, analyzer_response);
                 add_elapsed_ms(&mut metrics.edit_application_ms, started);
                 edit_result?;
             }
@@ -864,7 +865,7 @@ async fn run_job_inner(
                 let edits = edits?;
 
                 let started = Instant::now();
-                let edit_result = apply_patch_plan_edits(state, id, &policy, edits);
+                let edit_result = apply_patch_plan_response(state, id, &policy, edits);
                 add_elapsed_ms(&mut metrics.edit_application_ms, started);
                 edit_result?;
             }
@@ -893,7 +894,7 @@ async fn run_job_inner(
         "repairing",
         "Validation failed; deterministic V1 cannot repair yet, reverting run changes",
     )?;
-    revert_patches(state, id)?;
+    edit_journal::revert_patches(&state.db, id)?;
     state.db.set_error(
         id,
         &format!("validation failed: {}", validation_result.output),
@@ -911,11 +912,11 @@ fn add_elapsed_ms(slot: &mut Option<u64>, started: Instant) {
     *slot = Some(slot.unwrap_or(0).saturating_add(elapsed));
 }
 
-fn apply_analyzer_edits(
+fn apply_analyzer_response(
     state: &ServiceState,
     run_id: &str,
     policy: &PathPolicy,
-    response: AnalyzerResponse,
+    response: analyzer::AnalyzerResponse,
 ) -> Result<()> {
     for diagnostic in response.diagnostics {
         state.db.append_event(run_id, &diagnostic)?;
@@ -935,49 +936,23 @@ fn apply_analyzer_edits(
         "Applying deterministic analyzer edits",
     )?;
 
-    for edit in response.edits {
-        let file_path = PathBuf::from(&edit.file_path);
-        if policy.decision_for(&file_path) != PathDecision::Mutable {
-            return Err(anyhow!(
-                "analyzer attempted to edit non-mutable path {}",
-                edit.file_path
-            ));
-        }
-
-        let current = std::fs::read_to_string(&file_path)
-            .with_context(|| format!("failed to read {}", edit.file_path))?;
-        if current != edit.original_content {
-            return Err(anyhow!(
-                "external modification conflict while editing {}",
-                edit.file_path
-            ));
-        }
-
-        state.db.insert_patch(PatchRecord {
-            run_id: run_id.to_string(),
-            file_path: edit.file_path.clone(),
-            original_content: edit.original_content.clone(),
-            new_content: edit.new_content.clone(),
-            rule_id: edit.rule_id.clone(),
-            summary: edit.summary.clone(),
-            action: PatchAction::Update,
-        })?;
-        if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        std::fs::write(&file_path, edit.new_content)
-            .with_context(|| format!("failed to write {}", edit.file_path))?;
+    let edits = response
+        .edits
+        .into_iter()
+        .map(JournaledEdit::from)
+        .collect::<Vec<_>>();
+    edit_journal::apply_edits(&state.db, run_id, policy, edits.clone())?;
+    for edit in edits {
         state.db.append_event(
             run_id,
-            &format!("Applied {} to {}", edit.rule_id, edit.file_path),
+            &format!("Applied {} to {}", edit.rule_id, edit.file_path.display()),
         )?;
     }
 
     Ok(())
 }
 
-fn apply_patch_plan_edits(
+fn apply_patch_plan_response(
     state: &ServiceState,
     run_id: &str,
     policy: &PathPolicy,
@@ -992,51 +967,15 @@ fn apply_patch_plan_edits(
 
     transition(state, run_id, "editing", "Applying model patch-plan edits")?;
 
+    let edits = edits
+        .into_iter()
+        .map(JournaledEdit::from)
+        .collect::<Vec<_>>();
+    edit_journal::apply_edits(&state.db, run_id, policy, edits.clone())?;
     for edit in edits {
-        let file_path = PathBuf::from(&edit.file_path);
-        if policy.decision_for(&file_path) != PathDecision::Mutable {
-            return Err(anyhow!(
-                "patch plan attempted to edit non-mutable path {}",
-                edit.file_path
-            ));
-        }
-
-        match edit.action {
-            PatchAction::Update => {
-                let current = std::fs::read_to_string(&file_path)
-                    .with_context(|| format!("failed to read {}", edit.file_path))?;
-                if current != edit.original_content {
-                    return Err(anyhow!(
-                        "external modification conflict while editing {}",
-                        edit.file_path
-                    ));
-                }
-            }
-            PatchAction::Create => {
-                if file_path.exists() {
-                    return Err(anyhow!("create target already exists: {}", edit.file_path));
-                }
-            }
-        }
-
-        state.db.insert_patch(PatchRecord {
-            run_id: run_id.to_string(),
-            file_path: edit.file_path.clone(),
-            original_content: edit.original_content.clone(),
-            new_content: edit.new_content.clone(),
-            rule_id: edit.rule_id.clone(),
-            summary: edit.summary.clone(),
-            action: edit.action,
-        })?;
-        if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        std::fs::write(&file_path, edit.new_content)
-            .with_context(|| format!("failed to write {}", edit.file_path))?;
         state.db.append_event(
             run_id,
-            &format!("Applied {} to {}", edit.rule_id, edit.file_path),
+            &format!("Applied {} to {}", edit.rule_id, edit.file_path.display()),
         )?;
     }
 
@@ -1279,27 +1218,6 @@ fn transition(state: &ServiceState, run_id: &str, status: &str, message: &str) -
 fn append_run_event(state: &ServiceState, run_id: &str, message: &str) -> Result<()> {
     let event = state.db.append_event(run_id, message)?;
     let _ = state.events.send(event);
-    Ok(())
-}
-
-fn revert_patches(state: &ServiceState, run_id: &str) -> Result<()> {
-    let patches = state.db.patches_for_run(run_id)?;
-    for patch in patches.into_iter().rev() {
-        match patch.action {
-            PatchAction::Update => {
-                std::fs::write(&patch.file_path, patch.original_content)
-                    .with_context(|| format!("failed to revert {}", patch.file_path))?;
-            }
-            PatchAction::Create => match std::fs::remove_file(&patch.file_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("failed to remove {}", patch.file_path));
-                }
-            },
-        }
-    }
     Ok(())
 }
 
