@@ -614,7 +614,12 @@ async fn run_job(state: AppState, id: String, request: RunCreateRequest) -> Resu
         "preparing",
         &format!("Ensuring local model {model} is downloaded"),
     )?;
-    state.ollama.ensure_model_available(&model).await?;
+    state
+        .ollama
+        .ensure_model_available_with_progress(&model, |progress| {
+            let _ = append_run_event(&state, &id, &progress.message);
+        })
+        .await?;
 
     transition(
         &state,
@@ -897,6 +902,10 @@ fn validation_root(target_path: &str) -> PathBuf {
 
 fn transition(state: &AppState, run_id: &str, status: &str, message: &str) -> Result<()> {
     state.db.update_status(run_id, status)?;
+    append_run_event(state, run_id, message)
+}
+
+fn append_run_event(state: &AppState, run_id: &str, message: &str) -> Result<()> {
     let event = state.db.append_event(run_id, message)?;
     let _ = state.events.send(event);
     Ok(())

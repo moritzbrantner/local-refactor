@@ -10,7 +10,7 @@ axum = { version = "0.8", features = ["macros"] }
 chrono.workspace = true
 dirs = "5.0"
 local-refactor-core = { path = "../core" }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

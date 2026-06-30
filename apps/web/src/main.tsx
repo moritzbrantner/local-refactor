@@ -66,6 +66,13 @@ type RunRecord = {
   targetRelativePath?: string;
 };
 
+type RunEvent = {
+  id: number;
+  runId: string;
+  timestamp: string;
+  message: string;
+};
+
 type DiffResponse = {
   runId: string;
   files: Array<{ filePath: string; diff: string }>;
@@ -132,6 +139,7 @@ function App() {
     () => new Set([ROOT_PATH]),
   );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunEvents, setSelectedRunEvents] = useState<RunEvent[]>([]);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
   const [isPickingRepository, setIsPickingRepository] = useState(false);
   const [editedLabels, setEditedLabels] = useState<Record<string, string>>({});
@@ -150,6 +158,11 @@ function App() {
   const selectedRun = useMemo(
     () => runs.find((run) => run.id === selectedRunId) ?? runs[0],
     [runs, selectedRunId],
+  );
+
+  const downloadProgress = useMemo(
+    () => latestDownloadProgress(selectedRunEvents),
+    [selectedRunEvents],
   );
 
   async function refresh(repositoryId = selectedRepositoryId) {
@@ -228,6 +241,22 @@ function App() {
       .then(setDiff)
       .catch(() => setDiff(null));
   }, [selectedRun?.id, selectedRun?.updatedAt]);
+
+  useEffect(() => {
+    if (!selectedRun?.id) {
+      setSelectedRunEvents([]);
+      return;
+    }
+
+    setSelectedRunEvents([]);
+    const source = new EventSource(`${API_BASE_URL}/api/runs/${selectedRun.id}/events`);
+    source.addEventListener("run-event", (event) => {
+      const runEvent = JSON.parse((event as MessageEvent).data) as RunEvent;
+      setSelectedRunEvents((current) => appendUniqueRunEvent(current, runEvent));
+    });
+    source.onerror = () => source.close();
+    return () => source.close();
+  }, [selectedRun?.id]);
 
   async function addRepository() {
     setMessage("Choose a Git repository root in the system folder dialog.");
@@ -603,6 +632,27 @@ function App() {
                   )}
                   {selectedRun.error && <pre className="error">{selectedRun.error}</pre>}
 
+                  {downloadProgress && (
+                    <div className="download-progress">
+                      <div>
+                        <span>{downloadProgress.label}</span>
+                        <strong>{downloadProgress.percent}%</strong>
+                      </div>
+                      <progress value={downloadProgress.percent} max={100} />
+                    </div>
+                  )}
+
+                  {selectedRunEvents.length > 0 && (
+                    <ol className="event-log">
+                      {selectedRunEvents.slice(-12).map((event) => (
+                        <li key={event.id}>
+                          <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
+                          <span>{event.message}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+
                   <div className="diff-stack">
                     {diff?.files.map((file) => (
                       <article className="diff-file" key={file.filePath}>
@@ -631,6 +681,23 @@ function lines(value: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function appendUniqueRunEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
+  if (events.some((existing) => existing.id === event.id)) return events;
+  return [...events, event].sort((left, right) => left.id - right.id);
+}
+
+function latestDownloadProgress(events: RunEvent[]): { label: string; percent: number } | null {
+  for (const event of [...events].reverse()) {
+    const match = event.message.match(/^(Downloading .+): (\d+)%/);
+    if (!match) continue;
+    return {
+      label: match[1],
+      percent: Math.min(100, Number(match[2])),
+    };
+  }
+  return null;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
