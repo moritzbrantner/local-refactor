@@ -213,6 +213,11 @@ async fn extract_parameter_object_satisfies_run_supported_contract() {
     .await;
 }
 
+#[tokio::test]
+async fn rust_extract_helper_function_satisfies_run_supported_contract() {
+    assert_rust_run_supported_rule("rust-extract-helper-function").await;
+}
+
 async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.ts");
@@ -289,6 +294,67 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
         ]);
     }
     for expected in expected_events {
+        assert!(
+            event_messages
+                .iter()
+                .any(|message| message.contains(expected)),
+            "missing event containing {expected:?}: {event_messages:#?}"
+        );
+    }
+}
+
+async fn assert_rust_run_supported_rule(rule_id: &str) {
+    let harness = Harness::new();
+    let cargo_toml = harness.repo.path().join("Cargo.toml");
+    let lib = harness.repo.path().join("src/lib.rs");
+    let test_file = harness.repo.path().join("tests/integration.rs");
+    std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(test_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"rust_refactor_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(&lib, rust_invoice_source()).unwrap();
+    std::fs::write(&test_file, "use rust_refactor_fixture::calculate_invoice_total;\n\n#[test]\nfn calculates_total() {\n    assert_eq!(calculate_invoice_total(&[(100, 2), (50, 1)], 25), 225);\n}\n").unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": [rule_id],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+    assert!(std::fs::read_to_string(&lib)
+        .unwrap()
+        .contains("fn subtotal"));
+    assert_eq!(run["validationCommands"].as_array().unwrap()[0], "true");
+    assert!(run["validationOutput"].as_str().unwrap().contains("$ true"));
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.status, StatusCode::OK);
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(diff.json["files"][0]["ruleId"], rule_id);
+
+    let event_messages = harness.event_messages(&run_id);
+    for expected in [
+        "Ensuring local model qwen2.5-coder:7b is downloaded",
+        "Collecting mutable Rust files",
+        "Requesting model patch plan",
+        "Applying model patch-plan edits",
+        "Running validation checks",
+        "Run completed successfully",
+    ] {
         assert!(
             event_messages
                 .iter()
@@ -881,7 +947,7 @@ impl Harness {
 
     async fn poll_run(&self, run_id: &str, expected_status: &str) -> Value {
         let mut last_response = Value::Null;
-        for _ in 0..80 {
+        for _ in 0..300 {
             let response = self.get_json(&format!("/api/runs/{run_id}")).await;
             assert_eq!(response.status, StatusCode::OK);
             if response.json["status"] == expected_status {
@@ -988,6 +1054,10 @@ fn parameter_list_source() -> &'static str {
     "export function createUser(name: string, email: string) {\n  return `${name} <${email}>`;\n}\n\nexport function renderUser() {\n  return createUser(\"Ada\", \"ada@example.com\");\n}\n"
 }
 
+fn rust_invoice_source() -> &'static str {
+    "pub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    let mut total = 0;\n    for &(price, quantity) in items {\n        total += price * quantity;\n    }\n    total.saturating_sub(discount_cents)\n}\n"
+}
+
 fn fake_patch_plan(rule_id: &str) -> String {
     match rule_id {
         "extract-duplicate-block" => json!({
@@ -1060,6 +1130,17 @@ fn fake_patch_plan(rule_id: &str) -> String {
             }],
             "preservedExports": ["UserParams", "createUser", "renderUser"],
             "validationCommand": "true"
+        })
+        .to_string(),
+        "rust-extract-helper-function" => json!({
+            "summary": "Extract Rust subtotal helper",
+            "files": [{
+                "path": "src/lib.rs",
+                "action": "update",
+                "content": "fn subtotal(items: &[(u32, u32)]) -> u32 {\n    items.iter().map(|&(price, quantity)| price * quantity).sum()\n}\n\npub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    subtotal(items).saturating_sub(discount_cents)\n}\n"
+            }],
+            "preservedExports": ["calculate_invoice_total"],
+            "validationCommand": "cargo check --all-targets"
         })
         .to_string(),
         other => panic!("missing fake patch plan for {other}"),

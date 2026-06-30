@@ -22,6 +22,10 @@ pub fn detect_commands(target_path: &Path) -> Vec<String> {
         if package_json.exists() {
             return detect_package_scripts(&package_json);
         }
+        let cargo_toml = current.join("Cargo.toml");
+        if cargo_toml.exists() {
+            return detect_cargo_commands();
+        }
         dir = current.parent().map(Path::to_path_buf);
     }
 
@@ -98,10 +102,52 @@ fn package_manager_command(package_json: &Path) -> impl Fn(&str) -> String + '_ 
     move |script| format!("{package_manager} {script}")
 }
 
+fn detect_cargo_commands() -> Vec<String> {
+    let mut commands = vec!["cargo check --all-targets".to_string()];
+    if cargo_clippy_available() {
+        commands.push("cargo clippy --all-targets -- -D warnings".to_string());
+    }
+    commands
+}
+
+fn cargo_clippy_available() -> bool {
+    std::process::Command::new("cargo")
+        .args(["clippy", "--version"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 #[allow(dead_code)]
 fn nearest_existing_dir(path: &Path) -> PathBuf {
     if path.is_dir() {
         return path.to_path_buf();
     }
     path.parent().unwrap_or(Path::new(".")).to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_cargo_validation_commands_from_rust_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let commands = detect_commands(&src);
+
+        assert_eq!(commands[0], "cargo check --all-targets");
+        if cargo_clippy_available() {
+            assert!(commands
+                .iter()
+                .any(|command| command == "cargo clippy --all-targets -- -D warnings"));
+        }
+    }
 }

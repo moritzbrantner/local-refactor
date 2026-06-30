@@ -20,6 +20,7 @@ import "./styles.css";
 
 type Rule = {
   id: string;
+  language: "typescript" | "rust";
   name: string;
   description: string;
 };
@@ -580,7 +581,10 @@ function App() {
                       onChange={() => toggleRule(rule.id)}
                     />
                     <span>
-                      <strong>{rule.name}</strong>
+                      <span className="rule-heading">
+                        <strong>{rule.name}</strong>
+                        <span className="language-badge">{languageLabel(rule.language)}</span>
+                      </span>
                       <small>{rule.description}</small>
                     </span>
                   </label>
@@ -612,7 +616,7 @@ function App() {
               <textarea
                 value={validationCommands}
                 onChange={(event) => setValidationCommands(event.target.value)}
-                placeholder="bun test&#10;bun run typecheck"
+                placeholder="bun test&#10;bun run typecheck&#10;cargo check --all-targets&#10;cargo clippy --all-targets -- -D warnings"
               />
             </label>
 
@@ -811,6 +815,10 @@ function lines(value: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function languageLabel(language: Rule["language"]): string {
+  return language === "rust" ? "Rust" : "TypeScript";
 }
 
 function runTargetLabel(run: RunRecord): string {

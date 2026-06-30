@@ -6,6 +6,7 @@ local-refactor is a localhost-only refactoring service with a browser UI. The cu
 - React/Vite web UI on `127.0.0.1:5173`
 - SQLite run history and patch journal
 - TypeScript analyzer worker run through Bun
+- model-planned TypeScript and Rust refactoring rules
 - Ollama-backed local coding model selection at `/api/models`
 - deterministic `simplify-conditional` refactor rule
 
@@ -51,7 +52,7 @@ By default, files under the selected Target Folder are mutable, tests are read-o
 
 The backend still accepts a legacy absolute `targetPath` for direct API callers. Runs created through the browser UI submit `repositoryId` and `targetRelativePath`, and the service stores both that repository context and the resolved absolute target path.
 
-The implemented write rule is `simplify-conditional`, which rewrites simple boolean-return conditionals such as:
+The implemented deterministic TypeScript rule is `simplify-conditional`, which rewrites simple boolean-return conditionals such as:
 
 ```ts
 if (value) {
@@ -67,6 +68,12 @@ return value;
 ```
 
 Each write is recorded in SQLite before the file is changed. If validation commands fail, the service reverts its own writes from the patch journal.
+
+Rust support is model-planned. `rust-extract-helper-function` sends mutable `.rs`
+files to the local model with Rust-specific prompt context. When no validation
+commands are configured and the target is inside a Cargo project, the service
+detects `Cargo.toml` and runs `cargo check --all-targets`; if clippy is
+available it also runs `cargo clippy --all-targets -- -D warnings`.
 
 ## Configuration
 
@@ -157,10 +164,10 @@ required export was not preserved.
 
 ## Refactoring Catalog
 
-TypeScript refactoring kinds are tracked in `refactoring-catalog/typescript.json`.
-All current TypeScript catalog entries are production-supported through
-`/api/runs`. The catalog still keeps the promotion statuses explicit for future
-rules:
+Refactoring kinds are tracked by language in `refactoring-catalog/typescript.json`
+and `refactoring-catalog/rust.json`. Current catalog entries are
+production-supported through `/api/runs`. The catalog still keeps the promotion
+statuses explicit for future rules:
 
 - `cataloged`: documented target, not supported by analyzer or runs.
 - `llm-eval-only`: local model eval can produce a validated plan, but runs do
@@ -169,17 +176,17 @@ rules:
 - `run-supported`: service lifecycle tests prove the rule works through
   `/api/runs`.
 
-Run-supported rules execute in one of two ways. Narrow, syntax-local rules run
-through the TypeScript analyzer worker. Broader extraction and multi-file rules
-request a local model `patch-plan-v1`, validate the plan against mutable scope,
-protected paths, and write mode, then write through the patch journal before
-running validation commands.
+Run-supported rules execute in one of two ways. Narrow, syntax-local TypeScript
+rules run through the TypeScript analyzer worker. Broader extraction, multi-file,
+and Rust rules request a local model `patch-plan-v1`, validate the plan against
+mutable scope, protected paths, and write mode, then write through the patch
+journal before running validation commands.
 
 To add a new refactoring kind:
 
 1. Add a catalog entry with a unique kebab-case id.
-2. Add or create its fixture directory under `workers/typescript-analyzer/test-fixtures`.
+2. Add or create its fixture directory under the language's catalog or worker fixture path.
 3. Add an analyzer manifest and fixtures if it is deterministic.
-4. Add an LLM eval task under `scripts/llm-evals/typescript` if it is model-planned.
+4. Add an LLM eval task under `scripts/llm-evals/<language>` when that language has an eval runner.
 5. Add a service run-supported helper assertion before marking it `run-supported`.
 6. Run `bun run check` and, for model-planned kinds, `bun run check:llm`.

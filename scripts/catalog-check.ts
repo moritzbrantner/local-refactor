@@ -9,13 +9,13 @@ import {
 import { join } from "node:path";
 
 type Catalog = {
-  language: "typescript";
+  language: Language;
   entries: CatalogEntry[];
 };
 
 type CatalogEntry = {
   id: string;
-  language: "typescript";
+  language: Language;
   name: string;
   category: string;
   status: string;
@@ -30,7 +30,12 @@ type CatalogEntry = {
 };
 
 const root = new URL("..", import.meta.url).pathname;
-const catalogPath = join(root, "refactoring-catalog/typescript.json");
+type Language = "typescript" | "rust";
+
+const catalogPaths = [
+  join(root, "refactoring-catalog/typescript.json"),
+  join(root, "refactoring-catalog/rust.json"),
+];
 const schemaPath = join(root, "refactoring-catalog/schema.json");
 const rulesPath = join(root, "crates/core/src/rules.rs");
 const runLifecyclePath = join(root, "crates/service/tests/run_lifecycle.rs");
@@ -64,15 +69,18 @@ const preserves = new Set([
   "formatting-intent",
 ]);
 const allowedWrites = new Set(["single-file", "multi-file-within-target"]);
+const languages = new Set(["typescript", "rust"]);
 
 const errors: string[] = [];
 
 function main() {
   requireFile(schemaPath, "schema");
-  const catalog = readJson<Catalog>(catalogPath);
-  validateCatalog(catalog);
-  validatePublicRules(catalog);
-  validateRunSupportedMarkers(catalog);
+  const catalogs = catalogPaths.map((catalogPath) => readJson<Catalog>(catalogPath));
+  for (const catalog of catalogs) {
+    validateCatalog(catalog);
+  }
+  validatePublicRules(catalogs);
+  validateRunSupportedMarkers(catalogs);
 
   if (errors.length > 0) {
     for (const error of errors) {
@@ -82,7 +90,7 @@ function main() {
   }
 
   console.log(
-    `catalog-check: ${catalog.entries.length} ${catalog.language} entries valid`,
+    `catalog-check: ${catalogs.reduce((sum, catalog) => sum + catalog.entries.length, 0)} entries valid across ${catalogs.length} languages`,
   );
 }
 
@@ -91,8 +99,8 @@ function validateCatalog(catalog: Catalog) {
     add("catalog root must be an object");
     return;
   }
-  if (catalog.language !== "typescript") {
-    add("catalog language must be typescript");
+  if (!languages.has(catalog.language)) {
+    add(`catalog language must be one of ${[...languages].join(", ")}`);
   }
   if (!Array.isArray(catalog.entries) || catalog.entries.length === 0) {
     add("catalog entries must be a non-empty array");
@@ -127,8 +135,8 @@ function validateEntry(entry: CatalogEntry, seen: Set<string>) {
   requireEnum(entry.safetyLevel, safetyLevels, entry.id, "safetyLevel");
   requireEnum(entry.allowedWrites, allowedWrites, entry.id, "allowedWrites");
 
-  if (entry.language !== "typescript") {
-    add(`${entry.id}: language must be typescript`);
+  if (!languages.has(entry.language)) {
+    add(`${entry.id}: language must be one of ${[...languages].join(", ")}`);
   }
   if (typeof entry.requiresTypeInformation !== "boolean") {
     add(`${entry.id}: requiresTypeInformation must be boolean`);
@@ -166,25 +174,26 @@ function validateEntry(entry: CatalogEntry, seen: Set<string>) {
   }
 }
 
-function validatePublicRules(catalog: Catalog) {
+function validatePublicRules(catalogs: Catalog[]) {
   const rulesSource = readFileSync(rulesPath, "utf8");
   const publicRules = [...rulesSource.matchAll(/id:\s*"([^"]+)"/g)].map(
     (match) => match[1],
   );
-  const catalogIds = new Set(catalog.entries.map((entry) => entry.id));
+  const catalogIds = new Set(catalogs.flatMap((catalog) => catalog.entries.map((entry) => entry.id)));
   for (const rule of publicRules) {
     if (!catalogIds.has(rule)) {
-      add(`public rule ${rule} is missing from refactoring-catalog/typescript.json`);
+      add(`public rule ${rule} is missing from a refactoring catalog`);
     }
   }
 }
 
-function validateRunSupportedMarkers(catalog: Catalog) {
+function validateRunSupportedMarkers(catalogs: Catalog[]) {
   const runLifecycle = readFileSync(runLifecyclePath, "utf8");
-  for (const entry of catalog.entries) {
+  const entries = catalogs.flatMap((catalog) => catalog.entries);
+  for (const entry of entries) {
     if (entry.status !== "run-supported") continue;
     const marker = new RegExp(
-      `assert_run_supported_rule\\s*\\(\\s*"${escapeRegExp(entry.id)}"`,
+      `assert_(?:rust_)?run_supported_rule\\s*\\(\\s*"${escapeRegExp(entry.id)}"`,
     );
     if (!marker.test(runLifecycle)) {
       add(`${entry.id}: run-supported entry is missing service test marker`);

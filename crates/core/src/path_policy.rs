@@ -1,4 +1,5 @@
 use crate::config::TestFileMode;
+use crate::rules::Language;
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
@@ -63,7 +64,7 @@ impl PathPolicy {
         PathDecision::Mutable
     }
 
-    pub fn mutable_source_files(&self) -> Result<Vec<PathBuf>> {
+    pub fn mutable_source_files(&self, language: Language) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         for entry in WalkDir::new(&self.target_root)
             .into_iter()
@@ -75,7 +76,7 @@ impl PathPolicy {
             }
 
             let path = entry.path();
-            if !is_typescript_source(path) {
+            if !is_source_for_language(path, language) {
                 continue;
             }
 
@@ -108,10 +109,24 @@ pub fn is_typescript_source(path: &Path) -> bool {
     )
 }
 
+pub fn is_rust_source(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("rs")
+    )
+}
+
+pub fn is_source_for_language(path: &Path, language: Language) -> bool {
+    match language {
+        Language::TypeScript => is_typescript_source(path),
+        Language::Rust => is_rust_source(path),
+    }
+}
+
 fn is_skipped_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|value| value.to_str()),
-        Some("node_modules" | "dist" | "build" | ".next" | "coverage" | ".git")
+        Some("node_modules" | "dist" | "build" | ".next" | "coverage" | ".git" | "target")
     )
 }
 
@@ -157,6 +172,27 @@ mod tests {
         assert_eq!(
             policy.decision_for(Path::new("/repo/other/file.ts")),
             PathDecision::ReadOnly
+        );
+    }
+
+    #[test]
+    fn mutable_source_files_can_collect_rust_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("src/lib.rs");
+        let test = dir.path().join("tests/integration.rs");
+        let ignored = dir.path().join("target/debug/generated.rs");
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(test.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(ignored.parent().unwrap()).unwrap();
+        std::fs::write(&lib, "").unwrap();
+        std::fs::write(&test, "").unwrap();
+        std::fs::write(&ignored, "").unwrap();
+
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::ReadOnly).unwrap();
+
+        assert_eq!(
+            policy.mutable_source_files(Language::Rust).unwrap(),
+            vec![lib]
         );
     }
 }

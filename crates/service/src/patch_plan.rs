@@ -2,7 +2,7 @@ use crate::db::PatchAction;
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
     path_policy::{PathDecision, PathPolicy},
-    rules::AllowedWrites,
+    rules::{AllowedWrites, Language},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,6 +14,7 @@ use std::{
 #[serde(rename_all = "camelCase")]
 pub struct PatchPlanModelRequest {
     pub rule_id: String,
+    pub language: Language,
     pub rule_name: String,
     pub rule_description: String,
     pub target_root: PathBuf,
@@ -65,13 +66,14 @@ enum PatchPlanAction {
 }
 
 pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
+    let code_fence = request.language.code_fence();
     let files = request
         .files
         .iter()
         .map(|file| {
             format!(
-                "File: {}\n```typescript\n{}\n```",
-                file.relative_path, file.content
+                "File: {}\n```{}\n{}\n```",
+                file.relative_path, code_fence, file.content
             )
         })
         .collect::<Vec<_>>()
@@ -81,7 +83,13 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         "You are a local refactoring assistant.",
         "Return only valid JSON. Do not use Markdown fences outside JSON strings.",
         "The response must match patch-plan-v1 exactly:",
-        r#"{ "summary": "short summary", "files": [{ "path": "src/file.ts", "action": "update", "content": "complete TypeScript source" }], "preservedExports": ["ExportName"], "validationCommand": "tsc --noEmit" }"#,
+        &format!(
+            r#"{{ "summary": "short summary", "files": [{{ "path": "{}", "action": "update", "content": "{}" }}], "preservedExports": ["ExportName"], "validationCommand": "{}" }}"#,
+            request.language.example_path(),
+            request.language.example_content(),
+            request.validation_commands.join(" && ")
+        ),
+        &format!("Language: {}", request.language.display_name()),
         &format!("Rule id: {}", request.rule_id),
         &format!("Rule name: {}", request.rule_name),
         &format!("Rule description: {}", request.rule_description),
@@ -92,6 +100,7 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         ),
         "Use action update for existing files and action create for new files. Do not use action delete.",
         "Preserve runtime behavior, exports, and typecheck unless the rule explicitly requires internal code movement.",
+        "Use the provided validation commands to reason about whether the refactor is safe.",
         "Current mutable source files:",
         &files,
     ]
@@ -255,6 +264,7 @@ mod tests {
     ) -> PatchPlanModelRequest {
         PatchPlanModelRequest {
             rule_id: "extract-duplicate-block".to_string(),
+            language: Language::TypeScript,
             rule_name: "Extract Duplicate Block".to_string(),
             rule_description: "Extract duplicate local logic.".to_string(),
             target_root: root,

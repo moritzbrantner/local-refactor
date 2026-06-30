@@ -21,7 +21,7 @@ use local_refactor_core::{
         EffectiveConfig, TestFileMode,
     },
     path_policy::{PathDecision, PathPolicy},
-    rules::{rule_by_id, RuleExecutionKind, INITIAL_RULES},
+    rules::{rule_by_id, Language, RuleExecutionKind, INITIAL_RULES},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -487,12 +487,24 @@ async fn analyze(
         }
     };
 
-    match prepare_analyzer_request(&request).and_then(|prepared| {
+    let rules = effective_rules(&request);
+    let analyzer_rules = match analyzer_rule_ids(&rules) {
+        Ok(rules) => rules,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    match prepare_source_request(&request, Language::TypeScript).and_then(|prepared| {
         Ok((
             prepared.0,
             AnalyzerRequest {
                 files: prepared.1,
-                rules: effective_rules(&request),
+                rules: analyzer_rules,
             },
         ))
     }) {
@@ -512,6 +524,23 @@ async fn analyze(
         )
             .into_response(),
     }
+}
+
+fn analyzer_rule_ids(rule_ids: &[String]) -> Result<Vec<String>> {
+    let mut analyzer_rules = Vec::new();
+    for rule_id in rule_ids {
+        let rule =
+            rule_by_id(rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+        if rule.language != Language::TypeScript
+            || rule.execution_kind != RuleExecutionKind::Deterministic
+        {
+            return Err(anyhow!(
+                "/api/analyze only supports deterministic TypeScript rules"
+            ));
+        }
+        analyzer_rules.push(rule.id.to_string());
+    }
+    Ok(analyzer_rules)
 }
 
 async fn create_run(
@@ -768,22 +797,27 @@ async fn run_job_inner(
     metrics.model_ensure_available_ms = Some(elapsed_ms(started));
     ensure_result?;
 
-    transition(
-        state,
-        id,
-        "analyzing",
-        "Collecting mutable TypeScript files",
-    )?;
     for rule_id in rules {
         let rule =
             rule_by_id(&rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+        transition(
+            state,
+            id,
+            "analyzing",
+            &format!("Collecting mutable {} files", rule.language.display_name()),
+        )?;
         let started = Instant::now();
-        let prepared = prepare_analyzer_request(request);
+        let prepared = prepare_source_request(request, rule.language);
         add_elapsed_ms(&mut metrics.file_collection_ms, started);
         let (policy, files) = prepared?;
 
         match rule.execution_kind {
             RuleExecutionKind::Deterministic => {
+                if rule.language != Language::TypeScript {
+                    return Err(anyhow!(
+                        "deterministic analyzer rules are only available for TypeScript"
+                    ));
+                }
                 transition(
                     state,
                     id,
@@ -1035,6 +1069,7 @@ fn patch_plan_request(
 
     Ok(PatchPlanModelRequest {
         rule_id: rule.id.to_string(),
+        language: rule.language,
         rule_name: rule.name.to_string(),
         rule_description: rule.description.to_string(),
         target_root: policy.target_root().to_path_buf(),
@@ -1044,7 +1079,10 @@ fn patch_plan_request(
     })
 }
 
-fn prepare_analyzer_request(request: &RunCreateRequest) -> Result<(PathPolicy, Vec<String>)> {
+fn prepare_source_request(
+    request: &RunCreateRequest,
+    language: Language,
+) -> Result<(PathPolicy, Vec<String>)> {
     let target_path = request_target_path(request)?;
     let target_path = std::fs::canonicalize(target_path)
         .with_context(|| format!("target path does not exist: {target_path}"))?;
@@ -1066,7 +1104,7 @@ fn prepare_analyzer_request(request: &RunCreateRequest) -> Result<(PathPolicy, V
         request.test_file_mode.unwrap_or_default(),
     )?;
     let files = policy
-        .mutable_source_files()?
+        .mutable_source_files(language)?
         .into_iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect();

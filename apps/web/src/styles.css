@@ -275,6 +275,23 @@ select {
   margin-top: 2px;
 }
 
+.rule-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.language-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #24543a;
+  background: #e0f2e7;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .checkbox-row small {
   display: block;
   margin-top: 2px;

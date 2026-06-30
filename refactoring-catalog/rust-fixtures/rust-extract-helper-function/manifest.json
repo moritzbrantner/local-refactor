@@ -1,0 +1,5 @@
+{
+  "id": "rust-extract-helper-function",
+  "language": "rust",
+  "positive": ["invoice-total"]
+}
