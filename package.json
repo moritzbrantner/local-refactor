@@ -13,8 +13,10 @@
     "test:service": "cargo test -p local-refactor-service",
     "test:analyzer": "bun run --cwd workers/typescript-analyzer test",
     "test:web": "bun run --cwd apps/web test:e2e",
+    "test:benchmarks": "bun test scripts/benchmark-refactorings.test.ts",
     "check:catalog": "bun run scripts/catalog-check.ts",
-    "check": "cargo test --workspace && bun run check:catalog && bun run --cwd workers/typescript-analyzer test && bun run --cwd apps/web build && bun run --cwd apps/web test:e2e",
+    "benchmark:refactorings": "bun run scripts/benchmark-refactorings.ts",
+    "check": "cargo test --workspace && bun run check:catalog && bun run test:benchmarks && bun run --cwd workers/typescript-analyzer test && bun run --cwd apps/web build && bun run --cwd apps/web test:e2e",
     "check:llm": "bun run scripts/llm-eval.ts",
     "check:local": "bun run check && bun run check:llm"
   },

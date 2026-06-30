@@ -1,0 +1,8 @@
+{
+  "ruleId": "convert-nested-if-to-guard-clause",
+  "language": "typescript",
+  "positiveCases": ["access-label"],
+  "noEditCases": ["branch-with-mutation"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

@@ -1,3 +1,4 @@
+use crate::patch_plan::{build_prompt, PatchPlanModelRequest};
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::Url;
@@ -46,6 +47,27 @@ struct OllamaModel {
 struct OllamaPullRequest<'a> {
     model: &'a str,
     stream: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaGenerateRequest<'a> {
+    model: &'a str,
+    prompt: String,
+    stream: bool,
+    format: &'static str,
+    options: OllamaGenerateOptions,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaGenerateOptions {
+    temperature: u8,
+    num_predict: u16,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaGenerateResponse {
+    response: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +201,60 @@ impl OllamaProvider {
                 }
             }
         }
+    }
+
+    pub async fn generate_patch_plan(
+        &self,
+        model: &str,
+        request: PatchPlanModelRequest,
+    ) -> Result<String> {
+        if !is_supported_model(model) {
+            return Err(anyhow!("unsupported local coding model: {model}"));
+        }
+
+        let url = self.base_url.join("/api/generate")?;
+        let response = self
+            .client
+            .post(url)
+            .json(&OllamaGenerateRequest {
+                model,
+                prompt: build_prompt(&request),
+                stream: false,
+                format: "json",
+                options: OllamaGenerateOptions {
+                    temperature: 0,
+                    num_predict: 2200,
+                },
+            })
+            .send()
+            .await
+            .with_context(|| format!("failed to request patch plan from {model}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let detail = response
+                .json::<OllamaErrorResponse>()
+                .await
+                .ok()
+                .and_then(|body| body.error)
+                .unwrap_or_else(|| "Ollama returned an error".to_string());
+            return Err(anyhow!(
+                "failed to generate patch plan with {model}: {detail} ({status})"
+            ));
+        }
+
+        let body = response
+            .json::<OllamaGenerateResponse>()
+            .await
+            .with_context(|| "failed to decode Ollama patch-plan response")?;
+        if let Some(error) = body.error {
+            return Err(anyhow!(
+                "failed to generate patch plan with {model}: {error}"
+            ));
+        }
+        body.response
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("Ollama returned an empty patch-plan response"))
     }
 
     async fn start_local_ollama(&self) -> Result<()> {

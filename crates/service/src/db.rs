@@ -43,6 +43,19 @@ pub struct RunRecord {
     pub target_relative_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunMetrics {
+    pub total_run_ms: Option<u64>,
+    pub model_ensure_available_ms: Option<u64>,
+    pub file_collection_ms: Option<u64>,
+    pub analyzer_planning_ms: Option<u64>,
+    pub model_planning_ms: Option<u64>,
+    pub patch_plan_validation_ms: Option<u64>,
+    pub edit_application_ms: Option<u64>,
+    pub validation_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PatchRecord {
     pub run_id: String,
@@ -51,6 +64,29 @@ pub struct PatchRecord {
     pub new_content: String,
     pub rule_id: String,
     pub summary: String,
+    pub action: PatchAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchAction {
+    Update,
+    Create,
+}
+
+impl PatchAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Update => "update",
+            Self::Create => "create",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "create" => Self::Create,
+            _ => Self::Update,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +138,7 @@ impl Database {
                 new_content TEXT NOT NULL,
                 rule_id TEXT NOT NULL,
                 summary TEXT NOT NULL,
+                action TEXT NOT NULL DEFAULT 'update',
                 FOREIGN KEY(run_id) REFERENCES runs(id)
             );
 
@@ -118,6 +155,8 @@ impl Database {
         ensure_column(&conn, "runs", "repository_root_path", "TEXT")?;
         ensure_column(&conn, "runs", "target_relative_path", "TEXT")?;
         ensure_column(&conn, "runs", "model", "TEXT")?;
+        ensure_column(&conn, "runs", "metrics_json", "TEXT")?;
+        ensure_column(&conn, "patches", "action", "TEXT NOT NULL DEFAULT 'update'")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -270,6 +309,30 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_run_metrics(&self, id: &str, metrics: &RunMetrics) -> Result<()> {
+        self.conn()?.execute(
+            "UPDATE runs SET metrics_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::to_string(metrics)?, Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn metrics_for_run(&self, id: &str) -> Result<Option<RunMetrics>> {
+        let metrics_json: Option<String> = self
+            .conn()?
+            .query_row(
+                "SELECT metrics_json FROM runs WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+
+        metrics_json
+            .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .transpose()
+    }
+
     pub fn list_runs(&self, repository_id: Option<&str>) -> Result<Vec<RunRecord>> {
         let conn = self.conn()?;
         if let Some(repository_id) = repository_id {
@@ -326,8 +389,8 @@ impl Database {
         self.conn()?.execute(
             r#"
             INSERT INTO patches (
-                run_id, file_path, original_content, new_content, rule_id, summary
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                run_id, file_path, original_content, new_content, rule_id, summary, action
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 patch.run_id,
@@ -335,7 +398,8 @@ impl Database {
                 patch.original_content,
                 patch.new_content,
                 patch.rule_id,
-                patch.summary
+                patch.summary,
+                patch.action.as_str()
             ],
         )?;
         Ok(())
@@ -345,7 +409,7 @@ impl Database {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT run_id, file_path, original_content, new_content, rule_id, summary
+            SELECT run_id, file_path, original_content, new_content, rule_id, summary, action
             FROM patches
             WHERE run_id = ?1
             ORDER BY id ASC
@@ -359,6 +423,7 @@ impl Database {
                 new_content: row.get(3)?,
                 rule_id: row.get(4)?,
                 summary: row.get(5)?,
+                action: PatchAction::from_str(row.get::<_, String>(6)?.as_str()),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()

@@ -1,0 +1,8 @@
+{
+  "ruleId": "normalize-imports",
+  "language": "typescript",
+  "positiveCases": ["duplicate-named"],
+  "noEditCases": ["side-effect-import"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

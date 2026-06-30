@@ -1,0 +1,8 @@
+{
+  "ruleId": "split-oversized-function",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

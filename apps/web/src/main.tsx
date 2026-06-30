@@ -85,10 +85,22 @@ type DiffResponse = {
   files: DiffFile[];
 };
 
+type RunMetrics = {
+  totalRunMs: number | null;
+  modelEnsureAvailableMs: number | null;
+  fileCollectionMs: number | null;
+  analyzerPlanningMs: number | null;
+  modelPlanningMs: number | null;
+  patchPlanValidationMs: number | null;
+  editApplicationMs: number | null;
+  validationMs: number | null;
+};
+
 type RunReviewResponse = {
   run: RunRecord;
   events: RunEvent[];
   diff: DiffResponse;
+  metrics: RunMetrics;
 };
 
 type ModelSummary = {

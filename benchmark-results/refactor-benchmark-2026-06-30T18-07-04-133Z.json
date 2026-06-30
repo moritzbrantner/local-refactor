@@ -1,0 +1,974 @@
+{
+  "generatedAt": "2026-06-30T18:07:33.846Z",
+  "baseUrl": "http://127.0.0.1:7385",
+  "model": "qwen2.5-coder:7b",
+  "notes": [
+    "wallMs measures POST /api/runs until terminal run status.",
+    "servicePeakRssMb samples the local-refactor-service process RSS from /proc.",
+    "ollamaPeakRssMb sums RSS for processes whose command contains ollama.",
+    "nvidiaPeak* fields use nvidia-smi when available; null means unavailable or no matching process.",
+    "Runs use validationCommands: [\"true\"] to measure refactoring overhead without project test cost."
+  ],
+  "results": [
+    {
+      "ruleId": "simplify-conditional",
+      "status": "succeeded",
+      "wallMs": 646,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.1,
+      "ollamaPeakRssMb": 30.8,
+      "nvidiaPeakTotalVramMb": 1076,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842828568,
+          "serviceRssMb": 17.5,
+          "ollamaRssMb": 30.8,
+          "nvidiaTotalVramMb": 1076,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842828821,
+          "serviceRssMb": 19,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1076,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842829070,
+          "serviceRssMb": 19,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1076,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842829215,
+          "serviceRssMb": 19.1,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "convert-nested-if-to-guard-clause",
+      "status": "succeeded",
+      "wallMs": 651,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.2,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1067,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842829343,
+          "serviceRssMb": 19.1,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842829597,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842829845,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842829992,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "extract-type-definition",
+      "status": "succeeded",
+      "wallMs": 644,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.2,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1067,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842830127,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842830375,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842830627,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842830762,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "inline-trivial-helper",
+      "status": "succeeded",
+      "wallMs": 647,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.2,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1067,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842830900,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842831158,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842831402,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842831545,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "normalize-imports",
+      "status": "succeeded",
+      "wallMs": 648,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.3,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1067,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842831673,
+          "serviceRssMb": 19.2,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842831932,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842832177,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842832321,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "sort-independent-declarations",
+      "status": "succeeded",
+      "wallMs": 639,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.3,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1067,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842832456,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842832705,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842832956,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842833094,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "improve-local-name",
+      "status": "succeeded",
+      "wallMs": 636,
+      "diffFiles": 1,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.3,
+      "ollamaPeakRssMb": 30.1,
+      "nvidiaPeakTotalVramMb": 1071,
+      "nvidiaPeakOllamaVramMb": null,
+      "samples": [
+        {
+          "timestampMs": 1782842833224,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1067,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842833481,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1069,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842833720,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1071,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842833864,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1071,
+          "nvidiaOllamaVramMb": null
+        }
+      ]
+    },
+    {
+      "ruleId": "extract-duplicate-block",
+      "status": "succeeded",
+      "wallMs": 6245,
+      "diffFiles": 1,
+      "events": 8,
+      "error": null,
+      "servicePeakRssMb": 19.4,
+      "ollamaPeakRssMb": 4825.8,
+      "nvidiaPeakTotalVramMb": 5823,
+      "nvidiaPeakOllamaVramMb": 4694,
+      "samples": [
+        {
+          "timestampMs": 1782842833995,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 30.1,
+          "nvidiaTotalVramMb": 1071,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842834239,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 178.7,
+          "nvidiaTotalVramMb": 1096,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842834556,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 217.1,
+          "nvidiaTotalVramMb": 1099,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842834782,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 303.2,
+          "nvidiaTotalVramMb": 1096,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842835032,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 235.8,
+          "nvidiaTotalVramMb": 1236,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842835239,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 47.5,
+          "nvidiaTotalVramMb": 1127,
+          "nvidiaOllamaVramMb": 132
+        },
+        {
+          "timestampMs": 1782842835485,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 218.9,
+          "nvidiaTotalVramMb": 1106,
+          "nvidiaOllamaVramMb": null
+        },
+        {
+          "timestampMs": 1782842835734,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 353.9,
+          "nvidiaTotalVramMb": 1258,
+          "nvidiaOllamaVramMb": 132
+        },
+        {
+          "timestampMs": 1782842835984,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 354.5,
+          "nvidiaTotalVramMb": 1257,
+          "nvidiaOllamaVramMb": 132
+        },
+        {
+          "timestampMs": 1782842836366,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 4825.7,
+          "nvidiaTotalVramMb": 1260,
+          "nvidiaOllamaVramMb": 132
+        },
+        {
+          "timestampMs": 1782842836560,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 4825.8,
+          "nvidiaTotalVramMb": 5430,
+          "nvidiaOllamaVramMb": 4302
+        },
+        {
+          "timestampMs": 1782842836811,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 3504.1,
+          "nvidiaTotalVramMb": 5430,
+          "nvidiaOllamaVramMb": 4302
+        },
+        {
+          "timestampMs": 1782842837037,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 721.4,
+          "nvidiaTotalVramMb": 5810,
+          "nvidiaOllamaVramMb": 4682
+        },
+        {
+          "timestampMs": 1782842837286,
+          "serviceRssMb": 19.3,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5823,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842837539,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842837790,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5815,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842838041,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5815,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842838290,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5815,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842838539,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842838789,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842839047,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842839293,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842839542,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842839793,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.6,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842840040,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.8,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842840240,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.8,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        }
+      ]
+    },
+    {
+      "ruleId": "split-oversized-function",
+      "status": "succeeded",
+      "wallMs": 4136,
+      "diffFiles": 1,
+      "events": 8,
+      "error": null,
+      "servicePeakRssMb": 19.5,
+      "ollamaPeakRssMb": 782.9,
+      "nvidiaPeakTotalVramMb": 5814,
+      "nvidiaPeakOllamaVramMb": 4694,
+      "samples": [
+        {
+          "timestampMs": 1782842840358,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 758.8,
+          "nvidiaTotalVramMb": 5814,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842840612,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.6,
+          "nvidiaTotalVramMb": 5782,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842840862,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.6,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842841113,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.6,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842841363,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842841615,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842841862,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842842114,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842842365,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842842615,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842842863,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842843116,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5781,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842843365,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5782,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842843619,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.7,
+          "nvidiaTotalVramMb": 5793,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842843866,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.8,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842844116,
+          "serviceRssMb": 19.4,
+          "ollamaRssMb": 782.8,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842844364,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 782.9,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842844501,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 782.9,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        }
+      ]
+    },
+    {
+      "ruleId": "isolate-side-effect-free-helper",
+      "status": "succeeded",
+      "wallMs": 3383,
+      "diffFiles": 1,
+      "events": 8,
+      "error": null,
+      "servicePeakRssMb": 19.6,
+      "ollamaPeakRssMb": 814.2,
+      "nvidiaPeakTotalVramMb": 5797,
+      "nvidiaPeakOllamaVramMb": 4694,
+      "samples": [
+        {
+          "timestampMs": 1782842844614,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 782.9,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842844867,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842845119,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5797,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842845367,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5793,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842845618,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842845868,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842846117,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842846368,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842846619,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842846872,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842847118,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814.1,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842847372,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814.1,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842847621,
+          "serviceRssMb": 19.5,
+          "ollamaRssMb": 814.1,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842847869,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 814.2,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842847996,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 814.2,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        }
+      ]
+    },
+    {
+      "ruleId": "split-file-by-responsibility",
+      "status": "succeeded",
+      "wallMs": 3147,
+      "diffFiles": 2,
+      "events": 9,
+      "error": null,
+      "servicePeakRssMb": 19.6,
+      "ollamaPeakRssMb": 843.3,
+      "nvidiaPeakTotalVramMb": 5792,
+      "nvidiaPeakOllamaVramMb": 4694,
+      "samples": [
+        {
+          "timestampMs": 1782842848107,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 814.2,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842848360,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.2,
+          "nvidiaTotalVramMb": 5792,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842848611,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.2,
+          "nvidiaTotalVramMb": 5784,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842848860,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.2,
+          "nvidiaTotalVramMb": 5784,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842849113,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.2,
+          "nvidiaTotalVramMb": 5746,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842849363,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5748,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842849612,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5748,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842849863,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5748,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842850113,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5747,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842850362,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5747,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842850612,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5747,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842850869,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5753,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842851116,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5756,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842851249,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5756,
+          "nvidiaOllamaVramMb": 4694
+        }
+      ]
+    },
+    {
+      "ruleId": "extract-parameter-object",
+      "status": "succeeded",
+      "wallMs": 2404,
+      "diffFiles": 1,
+      "events": 8,
+      "error": null,
+      "servicePeakRssMb": 19.6,
+      "ollamaPeakRssMb": 868.3,
+      "nvidiaPeakTotalVramMb": 5774,
+      "nvidiaPeakOllamaVramMb": 4694,
+      "samples": [
+        {
+          "timestampMs": 1782842851369,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 843.3,
+          "nvidiaTotalVramMb": 5756,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842851619,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5756,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842851875,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5773,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842852124,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5773,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842852374,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842852625,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842852873,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842853131,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842853378,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842853629,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        },
+        {
+          "timestampMs": 1782842853764,
+          "serviceRssMb": 19.6,
+          "ollamaRssMb": 868.3,
+          "nvidiaTotalVramMb": 5774,
+          "nvidiaOllamaVramMb": 4694
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalRules": 12,
+    "succeeded": 12,
+    "failed": 0,
+    "totalWallMs": 23826,
+    "averageWallMs": 1986,
+    "slowestRule": "extract-duplicate-block"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "ruleId": "sort-independent-declarations",
+  "language": "typescript",
+  "positiveCases": ["literal-consts"],
+  "noEditCases": ["dependent-declarations"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

@@ -2,6 +2,7 @@ mod analyzer;
 mod db;
 mod diff;
 mod model_provider;
+mod patch_plan;
 mod validation;
 
 use analyzer::{AnalyzerRequest, AnalyzerResponse};
@@ -13,14 +14,14 @@ use axum::{
     routing::{get, patch, post},
     Json, Router,
 };
-use db::PatchRecord;
+use db::{PatchAction, PatchRecord};
 use local_refactor_core::{
     config::{
         default_protected_paths, find_project_config, load_config_file, ConfigLayer,
         EffectiveConfig, TestFileMode,
     },
     path_policy::{PathDecision, PathPolicy},
-    rules::INITIAL_RULES,
+    rules::{rule_by_id, RuleExecutionKind, INITIAL_RULES},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,14 +32,16 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
+    time::Instant,
 };
 use tokio::process::Command;
 use tokio::sync::broadcast;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
 
-pub use db::{Database, RunEvent};
+pub use db::{Database, RunEvent, RunMetrics};
 pub use model_provider::{ModelDownloadProgress, ModelSummary, ModelsResponse};
+pub use patch_plan::{PatchPlanEdit, PatchPlanModelRequest, PatchPlanSourceFile};
 
 pub type ModelProgressSink = Arc<dyn Fn(ModelDownloadProgress) + Send + Sync>;
 pub type ModelFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -51,6 +54,12 @@ pub trait ModelGateway: Send + Sync {
         name: &'a str,
         on_progress: ModelProgressSink,
     ) -> ModelFuture<'a, ()>;
+
+    fn generate_patch_plan<'a>(
+        &'a self,
+        model: &'a str,
+        request: PatchPlanModelRequest,
+    ) -> ModelFuture<'a, String>;
 }
 
 impl ModelGateway for model_provider::OllamaProvider {
@@ -67,6 +76,14 @@ impl ModelGateway for model_provider::OllamaProvider {
             self.ensure_model_available_with_progress(name, |progress| on_progress(progress))
                 .await
         })
+    }
+
+    fn generate_patch_plan<'a>(
+        &'a self,
+        model: &'a str,
+        request: PatchPlanModelRequest,
+    ) -> ModelFuture<'a, String> {
+        Box::pin(async move { self.generate_patch_plan(model, request).await })
     }
 }
 
@@ -214,6 +231,7 @@ struct RunReviewResponse {
     run: db::RunRecord,
     events: Vec<db::RunEvent>,
     diff: DiffResponse,
+    metrics: RunMetrics,
 }
 
 fn default_repair_budget() -> u32 {
@@ -670,9 +688,19 @@ async fn run_review(
         }
     };
 
-    match (state.db.events_for_run(&id), diff_for_run(&state.db, &id)) {
-        (Ok(events), Ok(diff)) => Json(RunReviewResponse { run, events, diff }).into_response(),
-        (Err(error), _) | (_, Err(error)) => (
+    match (
+        state.db.events_for_run(&id),
+        diff_for_run(&state.db, &id),
+        state.db.metrics_for_run(&id),
+    ) {
+        (Ok(events), Ok(diff), Ok(metrics)) => Json(RunReviewResponse {
+            run,
+            events,
+            diff,
+            metrics: metrics.unwrap_or_default(),
+        })
+        .into_response(),
+        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
@@ -701,16 +729,34 @@ fn diff_for_run(db: &Database, id: &str) -> Result<DiffResponse> {
 }
 
 async fn run_job(state: ServiceState, id: String, request: RunCreateRequest) -> Result<()> {
+    let started = Instant::now();
+    let mut metrics = RunMetrics::default();
+    let result = run_job_inner(&state, &id, &request, &mut metrics).await;
+    metrics.total_run_ms = Some(elapsed_ms(started));
+    if let Err(error) = state.db.set_run_metrics(&id, &metrics) {
+        tracing::warn!(run_id = id, error = %error, "failed to persist run metrics");
+    }
+    result
+}
+
+async fn run_job_inner(
+    state: &ServiceState,
+    id: &str,
+    request: &RunCreateRequest,
+    metrics: &mut RunMetrics,
+) -> Result<()> {
     let model = selected_model(&request)?;
+    let rules = effective_rules(&request);
     transition(
-        &state,
-        &id,
+        state,
+        id,
         "preparing",
         &format!("Ensuring local model {model} is downloaded"),
     )?;
     let progress_state = state.clone();
-    let progress_run_id = id.clone();
-    state
+    let progress_run_id = id.to_string();
+    let started = Instant::now();
+    let ensure_result = state
         .model_gateway
         .ensure_model_available_with_progress(
             &model,
@@ -718,64 +764,117 @@ async fn run_job(state: ServiceState, id: String, request: RunCreateRequest) -> 
                 let _ = append_run_event(&progress_state, &progress_run_id, &progress.message);
             }),
         )
-        .await?;
+        .await;
+    metrics.model_ensure_available_ms = Some(elapsed_ms(started));
+    ensure_result?;
 
     transition(
-        &state,
-        &id,
+        state,
+        id,
         "analyzing",
         "Collecting mutable TypeScript files",
     )?;
-    let (policy, files) = prepare_analyzer_request(&request)?;
+    for rule_id in rules {
+        let rule =
+            rule_by_id(&rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+        let started = Instant::now();
+        let prepared = prepare_analyzer_request(request);
+        add_elapsed_ms(&mut metrics.file_collection_ms, started);
+        let (policy, files) = prepared?;
 
-    transition(
-        &state,
-        &id,
-        "planning",
-        "Running TypeScript analyzer worker",
-    )?;
-    let analyzer_response = analyzer::run(
-        &state.analyzer_script,
-        AnalyzerRequest {
-            files,
-            rules: effective_rules(&request),
-        },
-    )
-    .await?;
+        match rule.execution_kind {
+            RuleExecutionKind::Deterministic => {
+                transition(
+                    state,
+                    id,
+                    "planning",
+                    &format!("Running TypeScript analyzer worker for {}", rule.id),
+                )?;
+                let started = Instant::now();
+                let analyzer_response = analyzer::run(
+                    &state.analyzer_script,
+                    AnalyzerRequest {
+                        files,
+                        rules: vec![rule.id.to_string()],
+                    },
+                )
+                .await;
+                add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
+                let analyzer_response = analyzer_response?;
 
-    apply_analyzer_edits(&state, &id, &policy, analyzer_response)?;
+                let started = Instant::now();
+                let edit_result = apply_analyzer_edits(state, id, &policy, analyzer_response);
+                add_elapsed_ms(&mut metrics.edit_application_ms, started);
+                edit_result?;
+            }
+            RuleExecutionKind::ModelPlanned => {
+                transition(
+                    state,
+                    id,
+                    "planning",
+                    &format!("Requesting model patch plan for {}", rule.id),
+                )?;
+                let patch_request = patch_plan_request(rule, &request, &policy, &files)?;
+                let started = Instant::now();
+                let model_response = state
+                    .model_gateway
+                    .generate_patch_plan(&model, patch_request.clone())
+                    .await;
+                add_elapsed_ms(&mut metrics.model_planning_ms, started);
+                let model_response = model_response?;
 
-    transition(&state, &id, "validating", "Running validation checks")?;
+                let started = Instant::now();
+                let edits =
+                    patch_plan::parse_patch_plan_response(&patch_request, &policy, &model_response);
+                add_elapsed_ms(&mut metrics.patch_plan_validation_ms, started);
+                let edits = edits?;
+
+                let started = Instant::now();
+                let edit_result = apply_patch_plan_edits(state, id, &policy, edits);
+                add_elapsed_ms(&mut metrics.edit_application_ms, started);
+                edit_result?;
+            }
+        }
+    }
+
+    transition(state, id, "validating", "Running validation checks")?;
     let validation_dir = validation_root(request_target_path(&request)?);
+    let started = Instant::now();
     let validation_result =
-        validation::run_commands(&validation_dir, &request.validation_commands).await?;
+        validation::run_commands(&validation_dir, &request.validation_commands).await;
+    metrics.validation_ms = Some(elapsed_ms(started));
+    let validation_result = validation_result?;
     state
         .db
-        .set_validation_output(&id, &validation_result.output)?;
+        .set_validation_output(id, &validation_result.output)?;
 
     if validation_result.success {
-        transition(&state, &id, "succeeded", "Run completed successfully")?;
+        transition(state, id, "succeeded", "Run completed successfully")?;
         return Ok(());
     }
 
     transition(
-        &state,
-        &id,
+        state,
+        id,
         "repairing",
         "Validation failed; deterministic V1 cannot repair yet, reverting run changes",
     )?;
-    revert_patches(&state, &id)?;
+    revert_patches(state, id)?;
     state.db.set_error(
-        &id,
+        id,
         &format!("validation failed: {}", validation_result.output),
     )?;
-    transition(
-        &state,
-        &id,
-        "failed",
-        "Run failed and changes were reverted",
-    )?;
+    transition(state, id, "failed", "Run failed and changes were reverted")?;
     Ok(())
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn add_elapsed_ms(slot: &mut Option<u64>, started: Instant) {
+    let elapsed = elapsed_ms(started);
+    *slot = Some(slot.unwrap_or(0).saturating_add(elapsed));
 }
 
 fn apply_analyzer_edits(
@@ -827,7 +926,12 @@ fn apply_analyzer_edits(
             new_content: edit.new_content.clone(),
             rule_id: edit.rule_id.clone(),
             summary: edit.summary.clone(),
+            action: PatchAction::Update,
         })?;
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
         std::fs::write(&file_path, edit.new_content)
             .with_context(|| format!("failed to write {}", edit.file_path))?;
         state.db.append_event(
@@ -837,6 +941,107 @@ fn apply_analyzer_edits(
     }
 
     Ok(())
+}
+
+fn apply_patch_plan_edits(
+    state: &ServiceState,
+    run_id: &str,
+    policy: &PathPolicy,
+    edits: Vec<PatchPlanEdit>,
+) -> Result<()> {
+    if edits.is_empty() {
+        state
+            .db
+            .append_event(run_id, "Patch plan produced no edits")?;
+        return Ok(());
+    }
+
+    transition(state, run_id, "editing", "Applying model patch-plan edits")?;
+
+    for edit in edits {
+        let file_path = PathBuf::from(&edit.file_path);
+        if policy.decision_for(&file_path) != PathDecision::Mutable {
+            return Err(anyhow!(
+                "patch plan attempted to edit non-mutable path {}",
+                edit.file_path
+            ));
+        }
+
+        match edit.action {
+            PatchAction::Update => {
+                let current = std::fs::read_to_string(&file_path)
+                    .with_context(|| format!("failed to read {}", edit.file_path))?;
+                if current != edit.original_content {
+                    return Err(anyhow!(
+                        "external modification conflict while editing {}",
+                        edit.file_path
+                    ));
+                }
+            }
+            PatchAction::Create => {
+                if file_path.exists() {
+                    return Err(anyhow!("create target already exists: {}", edit.file_path));
+                }
+            }
+        }
+
+        state.db.insert_patch(PatchRecord {
+            run_id: run_id.to_string(),
+            file_path: edit.file_path.clone(),
+            original_content: edit.original_content.clone(),
+            new_content: edit.new_content.clone(),
+            rule_id: edit.rule_id.clone(),
+            summary: edit.summary.clone(),
+            action: edit.action,
+        })?;
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        std::fs::write(&file_path, edit.new_content)
+            .with_context(|| format!("failed to write {}", edit.file_path))?;
+        state.db.append_event(
+            run_id,
+            &format!("Applied {} to {}", edit.rule_id, edit.file_path),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn patch_plan_request(
+    rule: &local_refactor_core::rules::RuleDefinition,
+    run_request: &RunCreateRequest,
+    policy: &PathPolicy,
+    files: &[String],
+) -> Result<PatchPlanModelRequest> {
+    let sources = files
+        .iter()
+        .map(|file| {
+            let path = PathBuf::from(file);
+            let relative = path
+                .strip_prefix(policy.target_root())
+                .with_context(|| format!("{} is outside target root", path.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            Ok(PatchPlanSourceFile {
+                relative_path: relative,
+                content,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(PatchPlanModelRequest {
+        rule_id: rule.id.to_string(),
+        rule_name: rule.name.to_string(),
+        rule_description: rule.description.to_string(),
+        target_root: policy.target_root().to_path_buf(),
+        files: sources,
+        validation_commands: run_request.validation_commands.clone(),
+        allowed_writes: rule.allowed_writes,
+    })
 }
 
 fn prepare_analyzer_request(request: &RunCreateRequest) -> Result<(PathPolicy, Vec<String>)> {
@@ -1042,8 +1247,20 @@ fn append_run_event(state: &ServiceState, run_id: &str, message: &str) -> Result
 fn revert_patches(state: &ServiceState, run_id: &str) -> Result<()> {
     let patches = state.db.patches_for_run(run_id)?;
     for patch in patches.into_iter().rev() {
-        std::fs::write(&patch.file_path, patch.original_content)
-            .with_context(|| format!("failed to revert {}", patch.file_path))?;
+        match patch.action {
+            PatchAction::Update => {
+                std::fs::write(&patch.file_path, patch.original_content)
+                    .with_context(|| format!("failed to revert {}", patch.file_path))?;
+            }
+            PatchAction::Create => match std::fs::remove_file(&patch.file_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to remove {}", patch.file_path));
+                }
+            },
+        }
     }
     Ok(())
 }

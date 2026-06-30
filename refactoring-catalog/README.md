@@ -15,8 +15,9 @@ not supported by runs until its status says `run-supported`.
 
 ## Fixture requirements
 
-Every catalog entry names a `fixtureDirectory`. Deterministic and run-supported
-rules must include a `manifest.json` and fixture files under:
+Every catalog entry names a `fixtureDirectory`. Run-supported rules must include
+a `manifest.json`. Deterministic analyzer rules include concrete fixture files
+under:
 
 ```text
 positive/
@@ -24,6 +25,8 @@ no-edit/
 invalid/
 ```
 
+Model-planned run-supported rules may use an empty analyzer manifest because
+their behavior is exercised through service lifecycle tests and LLM eval tasks.
 Cataloged and LLM-eval-only entries may use placeholder fixture directories so
 the promotion path is explicit.
 
@@ -32,6 +35,12 @@ the promotion path is explicit.
 Entries with `llmEvalDirectory` must have a matching task JSON file in that
 directory. The task validates a `patch-plan-v1` response and must state required
 files, exports, text, forbidden paths, and forbidden text.
+
+During `/api/runs`, model-planned rules validate generated `patch-plan-v1`
+responses before writing. Plans may update mutable files and create files inside
+the target scope when the catalog allows multi-file writes. Plans may not delete
+files, write outside the mutable scope, write protected paths, or write read-only
+test files.
 
 ## Promotion checklist
 

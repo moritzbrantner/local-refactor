@@ -1,0 +1,8 @@
+{
+  "ruleId": "isolate-side-effect-free-helper",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

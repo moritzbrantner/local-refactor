@@ -1,0 +1,8 @@
+{
+  "ruleId": "split-file-by-responsibility",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

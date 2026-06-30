@@ -1,0 +1,20 @@
+{
+  "id": "extract-parameter-object",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/user.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["UserParams", "createUser", "renderUser"],
+  "forbiddenText": ["fetch(", "console.log", "TODO"],
+  "requiredText": [
+    "export type UserParams",
+    "export function createUser(params: UserParams)",
+    "params.name",
+    "params.email",
+    "createUser({ name:",
+    "email:"
+  ],
+  "validationCommand": "tsc --noEmit",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/user.ts by updating the file and extracting the repeated createUser parameters into an exported type named UserParams. Use action update. Preserve exported functions createUser and renderUser. Source: export function createUser(name: string, email: string) { return `${name} <${email}>`; } export function renderUser() { return createUser(\"Ada\", \"ada@example.com\"); } The refactor should make createUser accept params: UserParams and update renderUser to pass an object."
+}

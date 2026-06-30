@@ -1,0 +1,8 @@
+{
+  "ruleId": "extract-duplicate-block",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

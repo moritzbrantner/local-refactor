@@ -1,0 +1,8 @@
+{
+  "ruleId": "improve-local-name",
+  "language": "typescript",
+  "positiveCases": ["cart-summary"],
+  "noEditCases": ["string-key"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

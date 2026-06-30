@@ -36,6 +36,14 @@ impl ModelGateway for ReadyModelGateway {
     ) -> ModelFuture<'a, ()> {
         Box::pin(async { Ok(()) })
     }
+
+    fn generate_patch_plan<'a>(
+        &'a self,
+        _model: &'a str,
+        request: local_refactor_service::PatchPlanModelRequest,
+    ) -> ModelFuture<'a, String> {
+        Box::pin(async move { Ok(fake_patch_plan(&request.rule_id)) })
+    }
 }
 
 struct RunFixture {
@@ -52,6 +60,154 @@ async fn simplify_conditional_satisfies_run_supported_contract() {
             source: conditional_source(),
             expected_content: "return value;",
             validation_commands: vec!["grep -q 'return value;' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn convert_nested_if_to_guard_clause_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "convert-nested-if-to-guard-clause",
+        RunFixture {
+            source: guard_clause_source(),
+            expected_content: "if (!user) return \"guest\";",
+            validation_commands: vec!["grep -q 'if (!user) return \"guest\";' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn extract_type_definition_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "extract-type-definition",
+        RunFixture {
+            source: report_source(),
+            expected_content: "export type ReportInput",
+            validation_commands: vec!["grep -q 'export type ReportInput' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn inline_trivial_helper_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "inline-trivial-helper",
+        RunFixture {
+            source: inline_helper_source(),
+            expected_content: "return (value * 2) + 1;",
+            validation_commands: vec!["grep -q 'return (value \\* 2) + 1;' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn normalize_imports_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "normalize-imports",
+        RunFixture {
+            source: duplicate_import_source(),
+            expected_content: "import { alpha, beta } from \"./tools\";",
+            validation_commands: vec!["grep -q 'import { alpha, beta }' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn sort_independent_declarations_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "sort-independent-declarations",
+        RunFixture {
+            source: unsorted_declarations_source(),
+            expected_content: "const alpha = \"a\";",
+            validation_commands: vec!["grep -q 'const alpha = \"a\";' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn improve_local_name_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "improve-local-name",
+        RunFixture {
+            source: cart_summary_source(),
+            expected_content: "const itemCount = items.length;",
+            validation_commands: vec!["grep -q 'const itemCount = items.length;' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn extract_duplicate_block_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "extract-duplicate-block",
+        RunFixture {
+            source: duplicate_block_source(),
+            expected_content: "function formatRecipient",
+            validation_commands: vec!["grep -q 'function formatRecipient' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn split_oversized_function_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "split-oversized-function",
+        RunFixture {
+            source: oversized_function_source(),
+            expected_content: "function subtotal",
+            validation_commands: vec!["grep -q 'function subtotal' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn isolate_side_effect_free_helper_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "isolate-side-effect-free-helper",
+        RunFixture {
+            source: order_source(),
+            expected_content: "function calculateOrderTotal",
+            validation_commands: vec!["grep -q 'function calculateOrderTotal' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn split_file_by_responsibility_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "split-file-by-responsibility",
+        RunFixture {
+            source: user_profile_source(),
+            expected_content: "export type { User } from \"./user\";",
+            validation_commands: vec![
+                "grep -q 'export type { User }' src/sample.ts",
+                "grep -q 'export type User' src/user.ts",
+                "grep -q 'formatUserLabel' src/user-format.ts",
+                "grep -q 'isValidUser' src/user-validation.ts",
+            ],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn extract_parameter_object_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "extract-parameter-object",
+        RunFixture {
+            source: parameter_list_source(),
+            expected_content: "export type UserParams",
+            validation_commands: vec!["grep -q 'export type UserParams' src/sample.ts"],
         },
     )
     .await;
@@ -93,7 +249,15 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
 
     let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
     assert_eq!(diff.status, StatusCode::OK);
-    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    let expected_diff_count = if rule_id == "split-file-by-responsibility" {
+        4
+    } else {
+        1
+    };
+    assert_eq!(
+        diff.json["files"].as_array().unwrap().len(),
+        expected_diff_count
+    );
     assert_eq!(diff.json["files"][0]["ruleId"], rule_id);
 
     let review = harness
@@ -101,17 +265,30 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
         .await;
     assert_eq!(review.status, StatusCode::OK);
     assert_eq!(review.json["run"]["id"], run_id);
-    assert_eq!(review.json["diff"]["files"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        review.json["diff"]["files"].as_array().unwrap().len(),
+        expected_diff_count
+    );
 
     let event_messages = harness.event_messages(&run_id);
-    for expected in [
+    let mut expected_events = vec![
         "Ensuring local model qwen2.5-coder:7b is downloaded",
         "Collecting mutable TypeScript files",
-        "Running TypeScript analyzer worker",
-        "Applying deterministic analyzer edits",
         "Running validation checks",
         "Run completed successfully",
-    ] {
+    ];
+    if is_model_planned(rule_id) {
+        expected_events.extend([
+            "Requesting model patch plan",
+            "Applying model patch-plan edits",
+        ]);
+    } else {
+        expected_events.extend([
+            "Running TypeScript analyzer worker",
+            "Applying deterministic analyzer edits",
+        ]);
+    }
+    for expected in expected_events {
         assert!(
             event_messages
                 .iter()
@@ -119,6 +296,79 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
             "missing event containing {expected:?}: {event_messages:#?}"
         );
     }
+}
+
+fn is_model_planned(rule_id: &str) -> bool {
+    matches!(
+        rule_id,
+        "split-oversized-function"
+            | "extract-duplicate-block"
+            | "isolate-side-effect-free-helper"
+            | "split-file-by-responsibility"
+            | "extract-parameter-object"
+    )
+}
+
+#[tokio::test]
+async fn metrics_are_recorded_for_deterministic_runs() {
+    let review = run_rule_and_get_review(
+        "simplify-conditional",
+        conditional_source(),
+        vec!["grep -q 'return value;' src/sample.ts"],
+        "succeeded",
+    )
+    .await;
+
+    assert_number(&review["metrics"]["totalRunMs"]);
+    assert_number(&review["metrics"]["modelEnsureAvailableMs"]);
+    assert_number(&review["metrics"]["fileCollectionMs"]);
+    assert_number(&review["metrics"]["analyzerPlanningMs"]);
+    assert!(review["metrics"]["modelPlanningMs"].is_null());
+    assert!(review["metrics"]["patchPlanValidationMs"].is_null());
+    assert_number(&review["metrics"]["editApplicationMs"]);
+    assert_number(&review["metrics"]["validationMs"]);
+}
+
+#[tokio::test]
+async fn metrics_are_recorded_for_model_planned_runs() {
+    let review = run_rule_and_get_review(
+        "extract-duplicate-block",
+        duplicate_block_source(),
+        vec!["grep -q 'function formatRecipient' src/sample.ts"],
+        "succeeded",
+    )
+    .await;
+
+    assert_number(&review["metrics"]["totalRunMs"]);
+    assert_number(&review["metrics"]["modelEnsureAvailableMs"]);
+    assert_number(&review["metrics"]["fileCollectionMs"]);
+    assert!(review["metrics"]["analyzerPlanningMs"].is_null());
+    assert_number(&review["metrics"]["modelPlanningMs"]);
+    assert_number(&review["metrics"]["patchPlanValidationMs"]);
+    assert_number(&review["metrics"]["editApplicationMs"]);
+    assert_number(&review["metrics"]["validationMs"]);
+}
+
+#[tokio::test]
+async fn failed_validation_still_records_timing_metrics() {
+    let review = run_rule_and_get_review(
+        "simplify-conditional",
+        conditional_source(),
+        vec!["exit 1"],
+        "failed",
+    )
+    .await;
+
+    assert_number(&review["metrics"]["totalRunMs"]);
+    assert_number(&review["metrics"]["modelEnsureAvailableMs"]);
+    assert_number(&review["metrics"]["fileCollectionMs"]);
+    assert_number(&review["metrics"]["analyzerPlanningMs"]);
+    assert_number(&review["metrics"]["editApplicationMs"]);
+    assert_number(&review["metrics"]["validationMs"]);
+    assert!(review["run"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("validation failed"));
 }
 
 #[tokio::test]
@@ -385,6 +635,41 @@ async fn validation_failure_reverts_all_patches_in_reverse_order() {
 }
 
 #[tokio::test]
+async fn model_planned_validation_failure_removes_created_files() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    let created_type = harness.repo.path().join("src/user.ts");
+    let created_format = harness.repo.path().join("src/user-format.ts");
+    let created_validation = harness.repo.path().join("src/user-validation.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    let original = user_profile_source();
+    std::fs::write(&sample, original).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["split-file-by-responsibility"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["exit 1"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "failed").await;
+    assert_eq!(std::fs::read_to_string(&sample).unwrap(), original);
+    assert!(!created_type.exists());
+    assert!(!created_format.exists());
+    assert!(!created_validation.exists());
+    assert!(run["error"].as_str().unwrap().contains("validation failed"));
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
 async fn run_leaves_test_files_read_only_by_default() {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.test.ts");
@@ -494,6 +779,8 @@ async fn run_review_is_loaded_from_persisted_database() {
         .as_str()
         .unwrap()
         .contains("+  return value;"));
+    assert_number(&review.json["metrics"]["totalRunMs"]);
+    assert_number(&review.json["metrics"]["validationMs"]);
 }
 
 struct Harness {
@@ -617,8 +904,166 @@ impl Harness {
     }
 }
 
+async fn run_rule_and_get_review(
+    rule_id: &str,
+    source: &str,
+    validation_commands: Vec<&str>,
+    expected_status: &str,
+) -> Value {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, source).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": [rule_id],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": validation_commands
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, expected_status).await;
+
+    let review = harness
+        .get_json(&format!("/api/runs/{run_id}/review"))
+        .await;
+    assert_eq!(review.status, StatusCode::OK);
+    review.json
+}
+
+fn assert_number(value: &Value) {
+    assert!(value.is_number(), "expected JSON number, got {value:?}");
+}
+
 fn conditional_source() -> &'static str {
     "export function isReady(value: boolean) {\n  if (value) {\n    return true;\n  }\n  return false;\n}\n"
+}
+
+fn guard_clause_source() -> &'static str {
+    "export function accessLabel(user: { active: boolean; admin: boolean } | null) {\n  if (user) {\n    if (user.active) {\n      if (user.admin) {\n        return \"admin\";\n      }\n      return \"member\";\n    }\n    return \"disabled\";\n  }\n  return \"guest\";\n}\n"
+}
+
+fn report_source() -> &'static str {
+    "export function renderReport(input: { title: string; total: number }) {\n  return `${input.title}: ${input.total}`;\n}\n"
+}
+
+fn inline_helper_source() -> &'static str {
+    "function double(value: number) {\n  return value * 2;\n}\n\nexport function score(value: number) {\n  return double(value) + 1;\n}\n"
+}
+
+fn duplicate_import_source() -> &'static str {
+    "import { beta } from \"./tools\";\nimport { alpha } from \"./tools\";\n\nexport function label() {\n  return `${alpha()} ${beta()}`;\n}\n"
+}
+
+fn unsorted_declarations_source() -> &'static str {
+    "const zebra = \"z\";\nconst alpha = \"a\";\nconst middle = \"m\";\n\nexport function label() {\n  return `${alpha}${middle}${zebra}`;\n}\n"
+}
+
+fn cart_summary_source() -> &'static str {
+    "export function summarizeCart(items: Array<{ price: number }>) {\n  const x = items.length;\n  const y = items.reduce((total, item) => total + item.price, 0);\n  return { itemCount: x, subtotal: y };\n}\n"
+}
+
+fn duplicate_block_source() -> &'static str {
+    "export function sendWelcomeEmail(user: { name: string; email: string }) {\n  const recipient = `${user.name} <${user.email}>`;\n  return `Welcome ${recipient}`;\n}\n\nexport function sendResetEmail(user: { name: string; email: string }) {\n  const recipient = `${user.name} <${user.email}>`;\n  return `Reset ${recipient}`;\n}\n"
+}
+
+fn oversized_function_source() -> &'static str {
+    "export function calculateInvoiceTotal(items: Array<{ price: number; quantity: number }>, discountRate: number, taxRate: number) {\n  let subtotal = 0;\n  for (const item of items) {\n    subtotal += item.price * item.quantity;\n  }\n  const discounted = subtotal - subtotal * discountRate;\n  const tax = discounted * taxRate;\n  return discounted + tax;\n}\n"
+}
+
+fn order_source() -> &'static str {
+    "export function submitOrder(items: Array<{ price: number; quantity: number }>, logger: { info(message: string): void }, saveOrder: (total: number) => void) {\n  let total = 0;\n  for (const item of items) {\n    total += item.price * item.quantity;\n  }\n  logger.info(`saving order ${total}`);\n  saveOrder(total);\n  return total;\n}\n"
+}
+
+fn user_profile_source() -> &'static str {
+    "export type User = { id: string; name: string; email: string };\n\nexport function formatUserLabel(user: User) {\n  return `${user.name} <${user.email}>`;\n}\n\nexport function isValidUser(user: User) {\n  return Boolean(user.id && user.email.includes(\"@\"));\n}\n"
+}
+
+fn parameter_list_source() -> &'static str {
+    "export function createUser(name: string, email: string) {\n  return `${name} <${email}>`;\n}\n\nexport function renderUser() {\n  return createUser(\"Ada\", \"ada@example.com\");\n}\n"
+}
+
+fn fake_patch_plan(rule_id: &str) -> String {
+    match rule_id {
+        "extract-duplicate-block" => json!({
+            "summary": "Extract duplicate recipient formatting",
+            "files": [{
+                "path": "src/sample.ts",
+                "action": "update",
+                "content": "function formatRecipient(user: { name: string; email: string }) {\n  return `${user.name} <${user.email}>`;\n}\n\nexport function sendWelcomeEmail(user: { name: string; email: string }) {\n  const recipient = formatRecipient(user);\n  return `Welcome ${recipient}`;\n}\n\nexport function sendResetEmail(user: { name: string; email: string }) {\n  const recipient = formatRecipient(user);\n  return `Reset ${recipient}`;\n}\n"
+            }],
+            "preservedExports": ["sendWelcomeEmail", "sendResetEmail"],
+            "validationCommand": "true"
+        })
+        .to_string(),
+        "split-oversized-function" => json!({
+            "summary": "Split invoice total helpers",
+            "files": [{
+                "path": "src/sample.ts",
+                "action": "update",
+                "content": "function subtotal(items: Array<{ price: number; quantity: number }>) {\n  let total = 0;\n  for (const item of items) {\n    total += item.price * item.quantity;\n  }\n  return total;\n}\n\nfunction discount(total: number, discountRate: number) {\n  return total - total * discountRate;\n}\n\nfunction tax(total: number, taxRate: number) {\n  return total * taxRate;\n}\n\nexport function calculateInvoiceTotal(items: Array<{ price: number; quantity: number }>, discountRate: number, taxRate: number) {\n  const discounted = discount(subtotal(items), discountRate);\n  return discounted + tax(discounted, taxRate);\n}\n"
+            }],
+            "preservedExports": ["calculateInvoiceTotal"],
+            "validationCommand": "true"
+        })
+        .to_string(),
+        "isolate-side-effect-free-helper" => json!({
+            "summary": "Extract pure order total helper",
+            "files": [{
+                "path": "src/sample.ts",
+                "action": "update",
+                "content": "function calculateOrderTotal(items: Array<{ price: number; quantity: number }>) {\n  let total = 0;\n  for (const item of items) {\n    total += item.price * item.quantity;\n  }\n  return total;\n}\n\nexport function submitOrder(items: Array<{ price: number; quantity: number }>, logger: { info(message: string): void }, saveOrder: (total: number) => void) {\n  const total = calculateOrderTotal(items);\n  logger.info(`saving order ${total}`);\n  saveOrder(total);\n  return total;\n}\n"
+            }],
+            "preservedExports": ["submitOrder"],
+            "validationCommand": "true"
+        })
+        .to_string(),
+        "split-file-by-responsibility" => json!({
+            "summary": "Split user profile responsibilities",
+            "files": [
+                {
+                    "path": "src/sample.ts",
+                    "action": "update",
+                    "content": "export type { User } from \"./user\";\nexport { formatUserLabel } from \"./user-format\";\nexport { isValidUser } from \"./user-validation\";\n"
+                },
+                {
+                    "path": "src/user.ts",
+                    "action": "create",
+                    "content": "export type User = { id: string; name: string; email: string };\n"
+                },
+                {
+                    "path": "src/user-format.ts",
+                    "action": "create",
+                    "content": "import type { User } from \"./user\";\n\nexport function formatUserLabel(user: User) {\n  return `${user.name} <${user.email}>`;\n}\n"
+                },
+                {
+                    "path": "src/user-validation.ts",
+                    "action": "create",
+                    "content": "import type { User } from \"./user\";\n\nexport function isValidUser(user: User) {\n  return Boolean(user.id && user.email.includes(\"@\"));\n}\n"
+                }
+            ],
+            "preservedExports": ["User", "formatUserLabel", "isValidUser"],
+            "validationCommand": "true"
+        })
+        .to_string(),
+        "extract-parameter-object" => json!({
+            "summary": "Extract user parameter object",
+            "files": [{
+                "path": "src/sample.ts",
+                "action": "update",
+                "content": "export type UserParams = { name: string; email: string };\n\nexport function createUser(params: UserParams) {\n  return `${params.name} <${params.email}>`;\n}\n\nexport function renderUser() {\n  return createUser({ name: \"Ada\", email: \"ada@example.com\" });\n}\n"
+            }],
+            "preservedExports": ["UserParams", "createUser", "renderUser"],
+            "validationCommand": "true"
+        })
+        .to_string(),
+        other => panic!("missing fake patch plan for {other}"),
+    }
 }
 
 fn analyzer_script_path() -> PathBuf {

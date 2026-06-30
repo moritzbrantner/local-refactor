@@ -1,0 +1,8 @@
+{
+  "ruleId": "extract-type-definition",
+  "language": "typescript",
+  "positiveCases": ["report-input"],
+  "noEditCases": ["already-named"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

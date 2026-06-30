@@ -1,0 +1,8 @@
+{
+  "ruleId": "inline-trivial-helper",
+  "language": "typescript",
+  "positiveCases": ["one-use-helper"],
+  "noEditCases": ["reused-helper"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

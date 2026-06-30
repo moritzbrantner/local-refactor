@@ -1,0 +1,8 @@
+{
+  "ruleId": "extract-parameter-object",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

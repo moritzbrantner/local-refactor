@@ -158,7 +158,9 @@ required export was not preserved.
 ## Refactoring Catalog
 
 TypeScript refactoring kinds are tracked in `refactoring-catalog/typescript.json`.
-Cataloged does not mean production-supported:
+All current TypeScript catalog entries are production-supported through
+`/api/runs`. The catalog still keeps the promotion statuses explicit for future
+rules:
 
 - `cataloged`: documented target, not supported by analyzer or runs.
 - `llm-eval-only`: local model eval can produce a validated plan, but runs do
@@ -166,6 +168,12 @@ Cataloged does not mean production-supported:
 - `deterministic-rule`: analyzer can produce edits for fixture cases.
 - `run-supported`: service lifecycle tests prove the rule works through
   `/api/runs`.
+
+Run-supported rules execute in one of two ways. Narrow, syntax-local rules run
+through the TypeScript analyzer worker. Broader extraction and multi-file rules
+request a local model `patch-plan-v1`, validate the plan against mutable scope,
+protected paths, and write mode, then write through the patch journal before
+running validation commands.
 
 To add a new refactoring kind:
 
