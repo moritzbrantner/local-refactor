@@ -9,7 +9,11 @@
   "scripts": {
     "dev:service": "cargo run -p local-refactor-service",
     "dev:web": "bun run --cwd apps/web dev",
-    "check": "cargo test --workspace && bun run --cwd workers/typescript-analyzer test && bun run --cwd apps/web build"
+    "test:core": "cargo test -p local-refactor-core",
+    "test:service": "cargo test -p local-refactor-service",
+    "test:analyzer": "bun run --cwd workers/typescript-analyzer test",
+    "test:web": "bun run --cwd apps/web test:e2e",
+    "check": "cargo test --workspace && bun run --cwd workers/typescript-analyzer test && bun run --cwd apps/web build && bun run --cwd apps/web test:e2e"
   },
   "devDependencies": {
     "@types/bun": "^1.1.14"

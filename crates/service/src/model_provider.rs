@@ -97,6 +97,7 @@ impl OllamaProvider {
         )
     }
 
+    #[allow(dead_code)]
     pub fn with_base_url(base_url: Url) -> Self {
         Self::with_base_url_and_command(base_url, "ollama")
     }
@@ -126,6 +127,7 @@ impl OllamaProvider {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn ensure_model_available(&self, name: &str) -> Result<()> {
         self.ensure_model_available_with_progress(name, |_| {})
             .await
