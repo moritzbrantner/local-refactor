@@ -17,6 +17,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -105,6 +106,7 @@ label,
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #c8d0d8;
@@ -117,6 +119,11 @@ textarea {
 textarea {
   min-height: 72px;
   resize: vertical;
+}
+
+select {
+  min-width: 0;
+  appearance: auto;
 }
 
 .repository-list,
@@ -276,6 +283,28 @@ textarea {
   font-weight: 400;
 }
 
+.model-select {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.field-note,
+.field-error {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.field-note {
+  color: #697583;
+}
+
+.field-error {
+  color: #8f1d14;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -396,7 +425,8 @@ textarea {
 .status.editing,
 .status.validating,
 .status.planning,
-.status.analyzing {
+.status.analyzing,
+.status.preparing {
   background: #9a5b00;
 }
 
@@ -414,9 +444,18 @@ textarea {
   font-size: 12px;
 }
 
+.run-model {
+  align-self: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #697583;
+  font-size: 12px;
+}
+
 .metadata {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 0 0 14px;
 }

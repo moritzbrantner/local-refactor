@@ -6,14 +6,14 @@ local-refactor is a localhost-only refactoring service with a browser UI. The cu
 - React/Vite web UI on `127.0.0.1:5173`
 - SQLite run history and patch journal
 - TypeScript analyzer worker run through Bun
-- Ollama model-list adapter at `/api/models`
+- Ollama-backed local coding model selection at `/api/models`
 - deterministic `simplify-conditional` refactor rule
 
 ## Requirements
 
 - Rust 1.96+
 - Bun 1.3+
-- Ollama is optional for the current deterministic MVP, but `/api/models` expects Ollama at `http://127.0.0.1:11434` unless `OLLAMA_BASE_URL` is set.
+- Ollama at `http://127.0.0.1:11434` unless `OLLAMA_BASE_URL` is set. Runs can select `qwen2.5-coder:7b` or `deepseek-coder:6.7b`; the service asks Ollama to download the selected model before each run if it is missing.
 
 ## Install
 
@@ -41,10 +41,10 @@ Open `http://127.0.0.1:5173`.
 
 In the browser UI:
 
-1. Add a local Git repository as a Repository Source. If you enter a subfolder inside a Git repository, local-refactor saves the repository root.
+1. Choose a local Git repository root folder as a Repository Source.
 2. Select the repository.
 3. Select the repository root or a subfolder as the Target Folder.
-4. Configure rules, test file mode, validation commands, and protected paths.
+4. Select the local coding model and configure rules, test file mode, validation commands, and protected paths.
 5. Start the run.
 
 By default, files under the selected Target Folder are mutable, tests are read-only, parent/sibling paths are read-only, and common build outputs/lockfiles are protected. Repository Sources are only local-refactor list entries; removing one from the UI does not delete files or existing run history.

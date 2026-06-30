@@ -4,6 +4,7 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
+  Cpu,
   FileDiff,
   Folder,
   FolderOpen,
@@ -32,6 +33,10 @@ type RepositoryRecord = {
   updatedAt: string;
 };
 
+type RepositoryPickResponse = {
+  repository: RepositoryRecord | null;
+};
+
 type FolderEntry = {
   name: string;
   relativePath: string;
@@ -50,6 +55,7 @@ type RunRecord = {
   createdAt: string;
   updatedAt: string;
   rules: string[];
+  model?: string;
   testFileMode: string;
   validationCommands: string[];
   protectedPaths: string[];
@@ -65,16 +71,31 @@ type DiffResponse = {
   files: Array<{ filePath: string; diff: string }>;
 };
 
+type ModelSummary = {
+  name: string;
+  label: string;
+  description: string;
+  downloaded: boolean;
+};
+
+type ModelsResponse = {
+  provider: string;
+  models: ModelSummary[];
+  error?: string;
+};
+
 const ROOT_PATH = ".";
+const DEFAULT_MODEL = "qwen2.5-coder:7b";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const api = {
   async get<T>(path: string): Promise<T> {
-    const response = await fetch(path);
+    const response = await fetch(`${API_BASE_URL}${path}`);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
   },
   async post<T>(path: string, body?: unknown): Promise<T> {
-    const response = await fetch(path, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -84,7 +105,7 @@ const api = {
     return response.json() as Promise<T>;
   },
   async patch<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(path, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -93,13 +114,15 @@ const api = {
     return response.json() as Promise<T>;
   },
   async delete(path: string): Promise<void> {
-    const response = await fetch(path, { method: "DELETE" });
+    const response = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
     if (!response.ok) throw new Error(await response.text());
   },
 };
 
 function App() {
   const [rules, setRules] = useState<Rule[]>([]);
+  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [modelsError, setModelsError] = useState("");
   const [repositories, setRepositories] = useState<RepositoryRecord[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState<string | null>(null);
@@ -110,10 +133,10 @@ function App() {
   );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
-  const [repositoryPath, setRepositoryPath] = useState("");
-  const [repositoryLabel, setRepositoryLabel] = useState("");
+  const [isPickingRepository, setIsPickingRepository] = useState(false);
   const [editedLabels, setEditedLabels] = useState<Record<string, string>>({});
   const [selectedRules, setSelectedRules] = useState<string[]>(["simplify-conditional"]);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [testFileMode, setTestFileMode] = useState<"readOnly" | "mutable">("readOnly");
   const [validationCommands, setValidationCommands] = useState("");
   const [protectedPaths, setProtectedPaths] = useState("src/generated/**");
@@ -138,8 +161,16 @@ function App() {
       api.get<RepositoryRecord[]>("/api/repositories"),
       api.get<RunRecord[]>(runsPath),
     ]);
+    const modelsResponse = await api.get<ModelsResponse>("/api/models");
 
     setRules(rulesResponse.rules);
+    setModels(modelsResponse.models);
+    setModelsError(modelsResponse.error ?? "");
+    setSelectedModel((current) =>
+      modelsResponse.models.some((model) => model.name === current)
+        ? current
+        : modelsResponse.models[0]?.name ?? DEFAULT_MODEL,
+    );
     setRepositories(repositoriesResponse);
     setEditedLabels((current) => {
       const next = { ...current };
@@ -198,17 +229,21 @@ function App() {
       .catch(() => setDiff(null));
   }, [selectedRun?.id, selectedRun?.updatedAt]);
 
-  async function addRepository(event: React.FormEvent) {
-    event.preventDefault();
-    setMessage("");
-    const repository = await api.post<RepositoryRecord>("/api/repositories", {
-      path: repositoryPath,
-      label: repositoryLabel || undefined,
-    });
-    setRepositoryPath("");
-    setRepositoryLabel("");
-    setSelectedRepositoryId(repository.id);
-    await refresh(repository.id);
+  async function addRepository() {
+    setMessage("Choose a Git repository root in the system folder dialog.");
+    setIsPickingRepository(true);
+    try {
+      const response = await api.post<RepositoryPickResponse>("/api/repositories/pick");
+      if (!response.repository) {
+        setMessage("No folder selected.");
+        return;
+      }
+      setSelectedRepositoryId(response.repository.id);
+      await refresh(response.repository.id);
+      setMessage("");
+    } finally {
+      setIsPickingRepository(false);
+    }
   }
 
   async function renameRepository(repository: RepositoryRecord) {
@@ -255,6 +290,7 @@ function App() {
       repositoryId: selectedRepositoryId,
       targetRelativePath: selectedTargetRelativePath,
       rules: selectedRules,
+      model: selectedModel,
       testFileMode,
       validationCommands: lines(validationCommands),
       protectedPaths: lines(protectedPaths),
@@ -335,29 +371,17 @@ function App() {
             <h2>Repositories</h2>
           </div>
 
-          <form className="add-repository" onSubmit={addRepository}>
-            <label>
-              Local Git path
-              <input
-                value={repositoryPath}
-                onChange={(event) => setRepositoryPath(event.target.value)}
-                placeholder="/absolute/path/to/repo-or-subfolder"
-                required
-              />
-            </label>
-            <label>
-              Label
-              <input
-                value={repositoryLabel}
-                onChange={(event) => setRepositoryLabel(event.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <button className="primary" type="submit">
+          <div className="add-repository">
+            <button
+              className="primary"
+              type="button"
+              onClick={() => addRepository().catch((error) => setMessage(error.message))}
+              disabled={isPickingRepository}
+            >
               <Plus size={18} />
-              Add repository
+              {isPickingRepository ? "Choosing folder" : "Choose root folder"}
             </button>
-          </form>
+          </div>
 
           <div className="repository-list">
             {repositories.map((repository) => (
@@ -440,6 +464,28 @@ function App() {
             </div>
 
             <div className="field-group">
+              <span>Model</span>
+              <label className="model-select">
+                <Cpu size={16} />
+                <select
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                >
+                  {models.map((model) => (
+                    <option key={model.name} value={model.name}>
+                      {model.label} {model.downloaded ? "downloaded" : "not downloaded"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <small className="field-note">
+                {models.find((model) => model.name === selectedModel)?.description ??
+                  "Selected model is downloaded automatically before the run."}
+              </small>
+              {modelsError && <small className="field-error">{modelsError}</small>}
+            </div>
+
+            <div className="field-group">
               <span>Rules</span>
               <div className="rule-list">
                 {rules.map((rule) => (
@@ -512,6 +558,7 @@ function App() {
                   >
                     <span className={`status ${run.status}`}>{run.status}</span>
                     <span className="path">{run.targetRelativePath ?? run.targetPath}</span>
+                    {run.model && <span className="run-model">{run.model}</span>}
                     <span className="time">{new Date(run.updatedAt).toLocaleString()}</span>
                   </button>
                 ))}
@@ -540,6 +587,10 @@ function App() {
                     <div>
                       <dt>Rules</dt>
                       <dd>{selectedRun.rules.join(", ") || "default"}</dd>
+                    </div>
+                    <div>
+                      <dt>Model</dt>
+                      <dd>{selectedRun.model ?? "default"}</dd>
                     </div>
                     <div>
                       <dt>Tests</dt>

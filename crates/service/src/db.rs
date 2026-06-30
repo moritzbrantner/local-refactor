@@ -32,6 +32,7 @@ pub struct RunRecord {
     pub created_at: String,
     pub updated_at: String,
     pub rules: Vec<String>,
+    pub model: Option<String>,
     pub test_file_mode: String,
     pub validation_commands: Vec<String>,
     pub protected_paths: Vec<String>,
@@ -116,6 +117,7 @@ impl Database {
         ensure_column(&conn, "runs", "repository_id", "TEXT")?;
         ensure_column(&conn, "runs", "repository_root_path", "TEXT")?;
         ensure_column(&conn, "runs", "target_relative_path", "TEXT")?;
+        ensure_column(&conn, "runs", "model", "TEXT")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -221,8 +223,8 @@ impl Database {
             INSERT INTO runs (
                 id, target_path, status, created_at, updated_at, rules_json,
                 test_file_mode, validation_json, protected_json, repository_id,
-                repository_root_path, target_relative_path
-            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                repository_root_path, target_relative_path, model
+            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 id,
@@ -235,6 +237,7 @@ impl Database {
                 request.repository_id,
                 request.repository_root_path,
                 request.target_relative_path,
+                request.model,
             ],
         )?;
         drop(conn);
@@ -274,7 +277,7 @@ impl Database {
                 r#"
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
-                       repository_id, repository_root_path, target_relative_path
+                       repository_id, repository_root_path, target_relative_path, model
                 FROM runs
                 WHERE repository_id = ?1
                 ORDER BY created_at DESC
@@ -291,7 +294,7 @@ impl Database {
             r#"
             SELECT id, target_path, status, created_at, updated_at, rules_json,
                    test_file_mode, validation_json, protected_json, validation_output, error,
-                   repository_id, repository_root_path, target_relative_path
+                   repository_id, repository_root_path, target_relative_path, model
             FROM runs
             ORDER BY created_at DESC
             LIMIT 100
@@ -308,7 +311,7 @@ impl Database {
                 r#"
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
-                       repository_id, repository_root_path, target_relative_path
+                       repository_id, repository_root_path, target_relative_path, model
                 FROM runs
                 WHERE id = ?1
                 "#,
@@ -445,6 +448,7 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
         rules: serde_json::from_str(&rules_json).unwrap_or_default(),
+        model: row.get(14)?,
         test_file_mode: serde_json::from_str::<String>(&test_file_mode_json)
             .unwrap_or(test_file_mode_json),
         validation_commands: serde_json::from_str(&validation_json).unwrap_or_default(),

@@ -25,6 +25,7 @@ use local_refactor_core::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
+    io::ErrorKind,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -92,6 +93,12 @@ struct RepositoryCreateRequest {
 #[serde(rename_all = "camelCase")]
 struct RepositoryUpdateRequest {
     label: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryPickResponse {
+    repository: Option<db::RepositoryRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +187,7 @@ async fn main() -> Result<()> {
             "/api/repositories",
             get(list_repositories).post(create_repository),
         )
+        .route("/api/repositories/pick", post(pick_repository))
         .route(
             "/api/repositories/{id}",
             patch(update_repository).delete(delete_repository),
@@ -196,7 +204,7 @@ async fn main() -> Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 7373));
+    let addr = service_addr()?;
     tracing::info!("local-refactor service listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -216,15 +224,12 @@ async fn rules() -> Json<RulesResponse<'static>> {
 async fn models(State(state): State<AppState>) -> impl IntoResponse {
     match state.ollama.list_models().await {
         Ok(models) => Json(models).into_response(),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
+        Err(error) => Json(serde_json::json!({
                 "provider": "ollama",
-                "models": [],
+                "models": model_provider::configured_model_summaries(),
                 "error": error.to_string()
-            })),
-        )
-            .into_response(),
+        }))
+        .into_response(),
     }
 }
 
@@ -254,33 +259,39 @@ async fn create_repository(
     State(state): State<AppState>,
     Json(request): Json<RepositoryCreateRequest>,
 ) -> impl IntoResponse {
-    let root = match git_root_for(&request.path).await {
-        Ok(root) => root,
+    match upsert_repository_source(&state.db, &request.path, request.label.as_deref()).await {
+        Ok(repository) => Json(repository).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn pick_repository(State(state): State<AppState>) -> impl IntoResponse {
+    let selected_path = match pick_repository_folder().await {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            return Json(RepositoryPickResponse { repository: None }).into_response();
+        }
         Err(error) => {
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": error.to_string() })),
             )
-                .into_response()
+                .into_response();
         }
     };
 
-    let label = request
-        .label
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| repository_label_from_root(&root));
-    let root_path = root.to_string_lossy().to_string();
-
-    match state
-        .db
-        .upsert_repository(&Uuid::new_v4().to_string(), &label, &root_path)
-    {
-        Ok(repository) => Json(repository).into_response(),
+    let selected_path = selected_path.to_string_lossy().to_string();
+    match upsert_repository_source(&state.db, &selected_path, None).await {
+        Ok(repository) => Json(RepositoryPickResponse {
+            repository: Some(repository),
+        })
+        .into_response(),
         Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
@@ -444,8 +455,16 @@ async fn create_run(
             let state_for_job = state.clone();
             let id_for_job = id.clone();
             tokio::spawn(async move {
+                let failure_state = state_for_job.clone();
                 if let Err(error) = run_job(state_for_job, id_for_job.clone(), request).await {
                     tracing::error!(run_id = id_for_job, error = %error, "run failed");
+                    let _ = failure_state.db.set_error(&id_for_job, &error.to_string());
+                    let _ = transition(
+                        &failure_state,
+                        &id_for_job,
+                        "failed",
+                        &format!("Run failed: {error}"),
+                    );
                 }
             });
             (StatusCode::ACCEPTED, Json(RunCreatedResponse { id })).into_response()
@@ -588,6 +607,15 @@ async fn run_diff(
 }
 
 async fn run_job(state: AppState, id: String, request: RunCreateRequest) -> Result<()> {
+    let model = selected_model(&request)?;
+    transition(
+        &state,
+        &id,
+        "preparing",
+        &format!("Ensuring local model {model} is downloaded"),
+    )?;
+    state.ollama.ensure_model_available(&model).await?;
+
     transition(
         &state,
         &id,
@@ -778,7 +806,26 @@ fn normalize_request(db: &Database, mut request: RunCreateRequest) -> Result<Run
     request.protected_paths = config.protected_paths;
     request.validation_commands = config.validation_commands;
     request.test_file_mode = Some(config.test_file_mode);
+    request.model = Some(selected_model(&request)?);
     Ok(request)
+}
+
+fn selected_model(request: &RunCreateRequest) -> Result<String> {
+    let requested_model = request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let model = match requested_model {
+        Some(model) => model,
+        None => model_provider::default_model_name(),
+    };
+
+    if !model_provider::is_supported_model(model) {
+        return Err(anyhow!("unsupported local coding model: {model}"));
+    }
+
+    Ok(model.to_string())
 }
 
 fn resolve_request_target(db: &Database, request: &mut RunCreateRequest) -> Result<()> {
@@ -889,6 +936,129 @@ async fn git_root_for(path: &str) -> Result<PathBuf> {
         .with_context(|| format!("failed to canonicalize Git repository root: {root}"))
 }
 
+async fn upsert_repository_source(
+    db: &Database,
+    path: &str,
+    label: Option<&str>,
+) -> Result<db::RepositoryRecord> {
+    let root = git_root_for(path).await?;
+    let label = label
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| repository_label_from_root(&root));
+    let root_path = root.to_string_lossy().to_string();
+
+    db.upsert_repository(&Uuid::new_v4().to_string(), &label, &root_path)
+}
+
+async fn pick_repository_folder() -> Result<Option<PathBuf>> {
+    tokio::task::spawn_blocking(pick_repository_folder_blocking)
+        .await
+        .context("folder picker task failed")?
+}
+
+fn pick_repository_folder_blocking() -> Result<Option<PathBuf>> {
+    match std::env::consts::OS {
+        "macos" => run_folder_picker_command(
+            "osascript",
+            &[
+                "-e",
+                r#"POSIX path of (choose folder with prompt "Select a Git repository root")"#,
+            ],
+        ),
+        "windows" => run_folder_picker_command(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Select a Git repository root'; if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }",
+            ],
+        ),
+        _ => run_first_available_folder_picker(&[
+            (
+                "zenity",
+                &[
+                    "--file-selection",
+                    "--directory",
+                    "--modal",
+                    "--width=900",
+                    "--height=650",
+                    "--title=Select a Git repository root",
+                ][..],
+            ),
+            ("kdialog", &["--getexistingdirectory", "."][..]),
+        ]),
+    }
+}
+
+fn run_first_available_folder_picker(commands: &[(&str, &[&str])]) -> Result<Option<PathBuf>> {
+    let mut missing = Vec::new();
+    for (program, args) in commands {
+        match run_folder_picker_command(program, args) {
+            Ok(path) => return Ok(path),
+            Err(error) if command_was_not_found(error.as_ref()) => {
+                missing.push((*program).to_string());
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(anyhow!(
+        "no folder picker is available; install one of: {}",
+        missing.join(", ")
+    ))
+}
+
+fn run_folder_picker_command(program: &str, args: &[&str]) -> Result<Option<PathBuf>> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .env("GTK_USE_PORTAL", "1")
+        .output()
+        .with_context(|| format!("failed to open folder picker with {program}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if picker_exit_was_cancel(output.status.code(), stderr.trim()) {
+            return Ok(None);
+        }
+        return Err(anyhow!(
+            "folder picker exited with status {}: {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let path = String::from_utf8(output.stdout)
+        .map_err(|_| anyhow!("folder picker returned a non-UTF-8 path"))?;
+    let path = path.trim();
+    if path.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(PathBuf::from(path)))
+}
+
+fn picker_exit_was_cancel(code: Option<i32>, stderr: &str) -> bool {
+    if code == Some(1) && stderr.is_empty() {
+        return true;
+    }
+
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("user canceled") || stderr.contains("cancelled")
+}
+
+fn command_was_not_found(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
+            return io_error.kind() == ErrorKind::NotFound;
+        }
+        current = error.source();
+    }
+    false
+}
+
 fn repository_label_from_root(root: &Path) -> String {
     root.file_name()
         .and_then(|value| value.to_str())
@@ -983,6 +1153,25 @@ fn default_db_path() -> Result<PathBuf> {
     Ok(dir.join("local-refactor.sqlite"))
 }
 
+fn service_addr() -> Result<SocketAddr> {
+    if let Ok(addr) = std::env::var("LOCAL_REFACTOR_ADDR") {
+        return addr
+            .parse()
+            .with_context(|| format!("invalid LOCAL_REFACTOR_ADDR: {addr}"));
+    }
+
+    let port = std::env::var("LOCAL_REFACTOR_PORT")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .with_context(|| format!("invalid LOCAL_REFACTOR_PORT: {value}"))
+        })
+        .transpose()?
+        .unwrap_or(7373);
+    Ok(SocketAddr::from(([127, 0, 0, 1], port)))
+}
+
 fn find_analyzer_script() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("LOCAL_REFACTOR_ANALYZER") {
         return Ok(PathBuf::from(path));
@@ -1046,6 +1235,27 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("Git work tree"));
+    }
+
+    #[tokio::test]
+    async fn repository_source_uses_selected_git_root_without_custom_label() {
+        let (_dir, db) = temp_db();
+        let repo = init_git_repo();
+        let src = repo.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let repository = upsert_repository_source(&db, src.to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            repository.root_path,
+            repo.path().canonicalize().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            repository.label,
+            repo.path().file_name().unwrap().to_string_lossy()
+        );
     }
 
     #[test]
@@ -1141,6 +1351,39 @@ mod tests {
             )
         );
         assert_eq!(run.target_relative_path.as_deref(), Some("src"));
+        assert_eq!(
+            request.model.as_deref(),
+            Some(model_provider::default_model_name())
+        );
+        assert_eq!(
+            run.model.as_deref(),
+            Some(model_provider::default_model_name())
+        );
+    }
+
+    #[test]
+    fn normalize_request_rejects_unsupported_model() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+
+        let error = normalize_request(
+            &db,
+            RunCreateRequest {
+                target_path: Some(repo.path().to_string_lossy().to_string()),
+                repository_id: None,
+                repository_root_path: None,
+                target_relative_path: None,
+                rules: Vec::new(),
+                model: Some("unknown-model:latest".to_string()),
+                test_file_mode: None,
+                validation_commands: Vec::new(),
+                protected_paths: Vec::new(),
+                repair_budget: 2,
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unsupported local coding model"));
     }
 
     #[test]
