@@ -373,6 +373,30 @@ select {
   font-size: 14px;
 }
 
+.history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.history-title h3 {
+  margin: 0;
+}
+
+.segmented.compact {
+  width: max-content;
+  grid-template-columns: repeat(2, minmax(76px, 1fr));
+  padding: 3px;
+}
+
+.segmented.compact button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .detail-title {
   display: flex;
   align-items: center;
@@ -387,10 +411,10 @@ select {
 
 .run-row {
   display: grid;
-  grid-template-columns: 92px 1fr;
+  grid-template-columns: 92px minmax(0, 1fr);
   gap: 6px 10px;
   width: 100%;
-  min-height: 68px;
+  min-height: 82px;
   padding: 10px;
   border: 1px solid #dde4ea;
   border-radius: 6px;
@@ -444,13 +468,18 @@ select {
   font-size: 12px;
 }
 
-.run-model {
+.run-model,
+.run-repository {
   align-self: start;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #697583;
   font-size: 12px;
+}
+
+.run-repository {
+  grid-column: 2;
 }
 
 .metadata {
@@ -478,6 +507,40 @@ select {
   font-weight: 700;
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.settings-grid section {
+  min-width: 0;
+  border: 1px solid #e0e6eb;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.settings-grid h4 {
+  margin: 0 0 8px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.settings-grid ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #17202a;
+  font-size: 12px;
+}
+
+.settings-grid li {
+  overflow-wrap: anywhere;
+}
+
 .diff-stack {
   display: grid;
   gap: 12px;
@@ -497,6 +560,32 @@ select {
   background: #f3f5f7;
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.diff-summary {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #d8dee4;
+  background: #fbfcfd;
+}
+
+.diff-summary span {
+  width: max-content;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #24543a;
+  background: #e0f2e7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.diff-summary p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #46515d;
+  font-size: 12px;
 }
 
 pre {
@@ -611,6 +700,10 @@ pre {
   }
 
   .metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 }

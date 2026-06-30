@@ -131,18 +131,27 @@ export class FixtureApi {
         return fulfillJson(route, { id: run.id }, 202);
       }
 
-      const diffMatch = path.match(/^\/api\/runs\/([^/]+)\/diff$/);
-      if (method === "GET" && diffMatch) {
+      const reviewMatch = path.match(/^\/api\/runs\/([^/]+)\/review$/);
+      if (method === "GET" && reviewMatch) {
+        const run = this.runs.find((item) => item.id === reviewMatch[1]);
+        if (!run) return route.fulfill({ status: 404 });
         return fulfillJson(route, {
-          runId: diffMatch[1],
-          files: [
+          run,
+          events: [
             {
-              filePath: "/tmp/local-refactor-fixture/src/sample.ts",
-              diff:
-                "--- /tmp/local-refactor-fixture/src/sample.ts\n+++ /tmp/local-refactor-fixture/src/sample.ts\n export function isReady(value: boolean) {\n-  if (value) {\n+  return value;\n-    return true;\n-  }\n-  return false;\n }\n",
+              id: 1,
+              runId: reviewMatch[1],
+              timestamp: now,
+              message: "Run completed successfully",
             },
           ],
+          diff: diffResponse(reviewMatch[1]),
         });
+      }
+
+      const diffMatch = path.match(/^\/api\/runs\/([^/]+)\/diff$/);
+      if (method === "GET" && diffMatch) {
+        return fulfillJson(route, diffResponse(diffMatch[1]));
       }
 
       const eventsMatch = path.match(/^\/api\/runs\/([^/]+)\/events$/);
@@ -232,4 +241,19 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
     headers: { "content-type": "application/json" },
     body: body === null ? "" : JSON.stringify(body),
   });
+}
+
+function diffResponse(runId: string) {
+  return {
+    runId,
+    files: [
+      {
+        filePath: "/tmp/local-refactor-fixture/src/sample.ts",
+        ruleId: "simplify-conditional",
+        summary: "Replaced boolean conditional with direct return.",
+        diff:
+          "--- /tmp/local-refactor-fixture/src/sample.ts\n+++ /tmp/local-refactor-fixture/src/sample.ts\n export function isReady(value: boolean) {\n-  if (value) {\n+  return value;\n-    return true;\n-  }\n-  return false;\n }\n",
+      },
+    ],
+  };
 }

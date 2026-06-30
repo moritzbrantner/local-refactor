@@ -203,7 +203,17 @@ struct DiffResponse {
 #[serde(rename_all = "camelCase")]
 struct FileDiff {
     file_path: String,
+    rule_id: String,
+    summary: String,
     diff: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunReviewResponse {
+    run: db::RunRecord,
+    events: Vec<db::RunEvent>,
+    diff: DiffResponse,
 }
 
 fn default_repair_budget() -> u32 {
@@ -253,6 +263,7 @@ pub fn router(state: ServiceState) -> Router {
         .route("/api/analyze", post(analyze))
         .route("/api/runs", post(create_run).get(list_runs))
         .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/review", get(run_review))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .route("/api/runs/{id}/revert", post(revert_run))
         .route("/api/runs/{id}/events", get(run_events))
@@ -633,28 +644,60 @@ async fn run_diff(
     State(state): State<ServiceState>,
     AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
-    match state.db.patches_for_run(&id) {
-        Ok(patches) => Json(DiffResponse {
-            run_id: id,
-            files: patches
-                .into_iter()
-                .map(|patch| FileDiff {
-                    file_path: patch.file_path.clone(),
-                    diff: diff::unified(
-                        &patch.file_path,
-                        &patch.original_content,
-                        &patch.new_content,
-                    ),
-                })
-                .collect(),
-        })
-        .into_response(),
+    match diff_for_run(&state.db, &id) {
+        Ok(diff) => Json(diff).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
     }
+}
+
+async fn run_review(
+    State(state): State<ServiceState>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    let run = match state.db.get_run(&id) {
+        Ok(Some(run)) => run,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    match (state.db.events_for_run(&id), diff_for_run(&state.db, &id)) {
+        (Ok(events), Ok(diff)) => Json(RunReviewResponse { run, events, diff }).into_response(),
+        (Err(error), _) | (_, Err(error)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn diff_for_run(db: &Database, id: &str) -> Result<DiffResponse> {
+    let patches = db.patches_for_run(id)?;
+    Ok(DiffResponse {
+        run_id: id.to_string(),
+        files: patches
+            .into_iter()
+            .map(|patch| FileDiff {
+                file_path: patch.file_path.clone(),
+                rule_id: patch.rule_id.clone(),
+                summary: patch.summary.clone(),
+                diff: diff::unified(
+                    &patch.file_path,
+                    &patch.original_content,
+                    &patch.new_content,
+                ),
+            })
+            .collect(),
+    })
 }
 
 async fn run_job(state: ServiceState, id: String, request: RunCreateRequest) -> Result<()> {

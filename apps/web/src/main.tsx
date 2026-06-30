@@ -73,9 +73,22 @@ type RunEvent = {
   message: string;
 };
 
+type DiffFile = {
+  filePath: string;
+  ruleId?: string;
+  summary?: string;
+  diff: string;
+};
+
 type DiffResponse = {
   runId: string;
-  files: Array<{ filePath: string; diff: string }>;
+  files: DiffFile[];
+};
+
+type RunReviewResponse = {
+  run: RunRecord;
+  events: RunEvent[];
+  diff: DiffResponse;
 };
 
 type ModelSummary = {
@@ -138,9 +151,10 @@ function App() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     () => new Set([ROOT_PATH]),
   );
+  const [runHistoryScope, setRunHistoryScope] = useState<"repository" | "all">("repository");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunReview, setSelectedRunReview] = useState<RunReviewResponse | null>(null);
   const [selectedRunEvents, setSelectedRunEvents] = useState<RunEvent[]>([]);
-  const [diff, setDiff] = useState<DiffResponse | null>(null);
   const [isPickingRepository, setIsPickingRepository] = useState(false);
   const [editedLabels, setEditedLabels] = useState<Record<string, string>>({});
   const [selectedRules, setSelectedRules] = useState<string[]>(["simplify-conditional"]);
@@ -156,8 +170,17 @@ function App() {
   );
 
   const selectedRun = useMemo(
-    () => runs.find((run) => run.id === selectedRunId) ?? runs[0],
-    [runs, selectedRunId],
+    () => {
+      const listedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
+      if (
+        selectedRunReview &&
+        selectedRunReview.run.id === (selectedRunId ?? listedRun?.id)
+      ) {
+        return selectedRunReview.run;
+      }
+      return listedRun;
+    },
+    [runs, selectedRunId, selectedRunReview],
   );
 
   const downloadProgress = useMemo(
@@ -165,8 +188,11 @@ function App() {
     [selectedRunEvents],
   );
 
-  async function refresh(repositoryId = selectedRepositoryId) {
-    const runsPath = repositoryId
+  async function refresh(
+    repositoryId = selectedRepositoryId,
+    historyScope = runHistoryScope,
+  ) {
+    const runsPath = historyScope === "repository" && repositoryId
       ? `/api/runs?repositoryId=${encodeURIComponent(repositoryId)}`
       : "/api/runs";
     const [rulesResponse, repositoriesResponse, runsResponse] = await Promise.all([
@@ -199,7 +225,7 @@ function App() {
         : runsResponse[0]?.id ?? null,
     );
 
-    if (!repositoryId && repositoriesResponse[0]) {
+    if (!selectedRepositoryId && repositoriesResponse[0]) {
       setSelectedRepositoryId(repositoriesResponse[0].id);
     }
   }
@@ -220,10 +246,9 @@ function App() {
       refresh().catch(() => undefined);
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [selectedRepositoryId]);
+  }, [selectedRepositoryId, runHistoryScope]);
 
   useEffect(() => {
-    setDiff(null);
     setFolderChildren({});
     setExpandedFolders(new Set([ROOT_PATH]));
     setSelectedTargetRelativePath(ROOT_PATH);
@@ -233,13 +258,24 @@ function App() {
 
   useEffect(() => {
     if (!selectedRun?.id) {
-      setDiff(null);
+      setSelectedRunReview(null);
       return;
     }
+    let ignore = false;
     api
-      .get<DiffResponse>(`/api/runs/${selectedRun.id}/diff`)
-      .then(setDiff)
-      .catch(() => setDiff(null));
+      .get<RunReviewResponse>(`/api/runs/${selectedRun.id}/review`)
+      .then((review) => {
+        if (!ignore) {
+          setSelectedRunReview(review);
+          setSelectedRunEvents(review.events);
+        }
+      })
+      .catch(() => {
+        if (!ignore) setSelectedRunReview(null);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [selectedRun?.id, selectedRun?.updatedAt]);
 
   useEffect(() => {
@@ -253,6 +289,11 @@ function App() {
     source.addEventListener("run-event", (event) => {
       const runEvent = JSON.parse((event as MessageEvent).data) as RunEvent;
       setSelectedRunEvents((current) => appendUniqueRunEvent(current, runEvent));
+      setSelectedRunReview((current) =>
+        current && current.run.id === runEvent.runId
+          ? { ...current, events: appendUniqueRunEvent(current.events, runEvent) }
+          : current,
+      );
     });
     source.onerror = () => source.close();
     return () => source.close();
@@ -268,7 +309,8 @@ function App() {
         return;
       }
       setSelectedRepositoryId(response.repository.id);
-      await refresh(response.repository.id);
+      setRunHistoryScope("repository");
+      await refresh(response.repository.id, "repository");
       setMessage("");
     } finally {
       setIsPickingRepository(false);
@@ -326,6 +368,7 @@ function App() {
       repairBudget: 2,
     });
     setSelectedRunId(response.id);
+    setRunHistoryScope("repository");
     await refresh();
   }
 
@@ -577,7 +620,26 @@ function App() {
 
           <div className="runs-layout">
             <section className="history">
-              <h3>History</h3>
+              <div className="history-title">
+                <h3>History</h3>
+                <div className="segmented compact" aria-label="Run history scope">
+                  <button
+                    type="button"
+                    className={runHistoryScope === "repository" ? "active" : ""}
+                    onClick={() => setRunHistoryScope("repository")}
+                    disabled={!selectedRepositoryId}
+                  >
+                    Repository
+                  </button>
+                  <button
+                    type="button"
+                    className={runHistoryScope === "all" ? "active" : ""}
+                    onClick={() => setRunHistoryScope("all")}
+                  >
+                    All
+                  </button>
+                </div>
+              </div>
               <div className="run-list">
                 {runs.map((run) => (
                   <button
@@ -586,12 +648,19 @@ function App() {
                     onClick={() => setSelectedRunId(run.id)}
                   >
                     <span className={`status ${run.status}`}>{run.status}</span>
-                    <span className="path">{run.targetRelativePath ?? run.targetPath}</span>
+                    <span className="path">{runTargetLabel(run)}</span>
                     {run.model && <span className="run-model">{run.model}</span>}
+                    <span className="run-repository">{repositoryLabel(run, repositories)}</span>
                     <span className="time">{new Date(run.updatedAt).toLocaleString()}</span>
                   </button>
                 ))}
-                {runs.length === 0 && <p className="empty">No runs for this repository.</p>}
+                {runs.length === 0 && (
+                  <p className="empty">
+                    {runHistoryScope === "repository"
+                      ? "No runs for this repository."
+                      : "No stored runs."}
+                  </p>
+                )}
               </div>
             </section>
 
@@ -625,7 +694,50 @@ function App() {
                       <dt>Tests</dt>
                       <dd>{selectedRun.testFileMode}</dd>
                     </div>
+                    <div>
+                      <dt>Target</dt>
+                      <dd>{runTargetLabel(selectedRun)}</dd>
+                    </div>
+                    <div>
+                      <dt>Repository</dt>
+                      <dd>{repositoryLabel(selectedRun, repositories)}</dd>
+                    </div>
+                    <div>
+                      <dt>Created</dt>
+                      <dd>{new Date(selectedRun.createdAt).toLocaleString()}</dd>
+                    </div>
+                    <div>
+                      <dt>Updated</dt>
+                      <dd>{new Date(selectedRun.updatedAt).toLocaleString()}</dd>
+                    </div>
                   </dl>
+
+                  <div className="settings-grid">
+                    <section>
+                      <h4>Validation commands</h4>
+                      {selectedRun.validationCommands.length > 0 ? (
+                        <ul>
+                          {selectedRun.validationCommands.map((command) => (
+                            <li key={command}>{command}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="empty">No validation commands recorded.</p>
+                      )}
+                    </section>
+                    <section>
+                      <h4>Protected paths</h4>
+                      {selectedRun.protectedPaths.length > 0 ? (
+                        <ul>
+                          {selectedRun.protectedPaths.map((path) => (
+                            <li key={path}>{path}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="empty">No protected paths recorded.</p>
+                      )}
+                    </section>
+                  </div>
 
                   {selectedRun.validationOutput && (
                     <pre className="log">{selectedRun.validationOutput}</pre>
@@ -644,7 +756,7 @@ function App() {
 
                   {selectedRunEvents.length > 0 && (
                     <ol className="event-log">
-                      {selectedRunEvents.slice(-12).map((event) => (
+                      {selectedRunEvents.map((event) => (
                         <li key={event.id}>
                           <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
                           <span>{event.message}</span>
@@ -654,13 +766,19 @@ function App() {
                   )}
 
                   <div className="diff-stack">
-                    {diff?.files.map((file) => (
+                    {selectedRunReview?.diff.files.map((file) => (
                       <article className="diff-file" key={file.filePath}>
                         <h3>{file.filePath}</h3>
+                        {(file.ruleId || file.summary) && (
+                          <div className="diff-summary">
+                            {file.ruleId && <span>{file.ruleId}</span>}
+                            {file.summary && <p>{file.summary}</p>}
+                          </div>
+                        )}
                         <pre>{file.diff}</pre>
                       </article>
                     ))}
-                    {diff?.files.length === 0 && (
+                    {selectedRunReview?.diff.files.length === 0 && (
                       <p className="empty">No file changes recorded.</p>
                     )}
                   </div>
@@ -681,6 +799,22 @@ function lines(value: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function runTargetLabel(run: RunRecord): string {
+  if (run.targetRelativePath && run.targetRelativePath !== ROOT_PATH) {
+    return run.targetRelativePath;
+  }
+  if (run.targetRelativePath === ROOT_PATH) {
+    return "Repository root";
+  }
+  return run.targetPath;
+}
+
+function repositoryLabel(run: RunRecord, repositories: RepositoryRecord[]): string {
+  const repository = repositories.find((item) => item.id === run.repositoryId);
+  if (repository) return repository.label;
+  return run.repositoryRootPath ?? run.targetPath;
 }
 
 function appendUniqueRunEvent(events: RunEvent[], event: RunEvent): RunEvent[] {

@@ -150,10 +150,56 @@ async fn run_leaves_test_files_read_only_by_default() {
     assert!(diff.json["files"].as_array().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn run_review_is_loaded_from_persisted_database() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["grep -q 'return value;' src/sample.ts"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, "succeeded").await;
+
+    let reopened = Harness::from_existing_database(harness.db_path.clone(), harness.repo);
+    let review = reopened
+        .get_json(&format!("/api/runs/{run_id}/review"))
+        .await;
+
+    assert_eq!(review.status, StatusCode::OK);
+    assert_eq!(review.json["run"]["id"], run_id);
+    assert_eq!(review.json["run"]["status"], "succeeded");
+    assert!(review.json["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["message"] == "Run completed successfully"));
+    assert_eq!(review.json["diff"]["files"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        review.json["diff"]["files"][0]["ruleId"],
+        "simplify-conditional"
+    );
+    assert!(review.json["diff"]["files"][0]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+  return value;"));
+}
+
 struct Harness {
     app: Router,
     db: Arc<Database>,
     repo: TempDir,
+    db_path: PathBuf,
     _db_dir: TempDir,
 }
 
@@ -166,7 +212,8 @@ impl Harness {
     fn new() -> Self {
         let repo = tempfile::tempdir().unwrap();
         let db_dir = tempfile::tempdir().unwrap();
-        let db = Arc::new(Database::open(db_dir.path().join("local-refactor.sqlite")).unwrap());
+        let db_path = db_dir.path().join("local-refactor.sqlite");
+        let db = Arc::new(Database::open(db_path.clone()).unwrap());
         let analyzer_script = analyzer_script_path();
         let state = ServiceState::new(db.clone(), analyzer_script, Arc::new(ReadyModelGateway));
         let app = router(state);
@@ -175,6 +222,23 @@ impl Harness {
             app,
             db,
             repo,
+            db_path,
+            _db_dir: db_dir,
+        }
+    }
+
+    fn from_existing_database(db_path: PathBuf, repo: TempDir) -> Self {
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open(db_path.clone()).unwrap());
+        let analyzer_script = analyzer_script_path();
+        let state = ServiceState::new(db.clone(), analyzer_script, Arc::new(ReadyModelGateway));
+        let app = router(state);
+
+        Self {
+            app,
+            db,
+            repo,
+            db_path,
             _db_dir: db_dir,
         }
     }

@@ -63,3 +63,35 @@ test("user can inspect and revert a run", async ({ page }) => {
   expect(fixture.revertCalls).toEqual(["run-existing"]);
   await expect(page.locator(".status.reverted").first()).toBeVisible();
 });
+
+test("user can browse all persisted runs across repositories", async ({ page }) => {
+  const repository = defaultRepository();
+  const archivedRepository = {
+    ...defaultRepository(),
+    id: "repo-2",
+    label: "Archived Repo",
+    rootPath: "/tmp/local-refactor-archived",
+  };
+  const fixture = createFixtureApi({
+    repositories: [repository, archivedRepository],
+    runs: [
+      succeededRun({ id: "run-current", repository, targetRelativePath: "src" }),
+      succeededRun({
+        id: "run-archived",
+        repository: archivedRepository,
+        targetRelativePath: "legacy",
+      }),
+    ],
+  });
+  await fixture.install(page);
+
+  await page.goto("/");
+  await expect(page.getByText("legacy")).not.toBeVisible();
+
+  await page.getByRole("button", { name: "All" }).click();
+
+  await expect(page.getByText("legacy")).toBeVisible();
+  await page.getByRole("button", { name: "legacy" }).click();
+  await expect(page.getByText("Archived Repo").last()).toBeVisible();
+  await expect(page.getByText("Run completed successfully").first()).toBeVisible();
+});
