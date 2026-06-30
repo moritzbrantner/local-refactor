@@ -1,0 +1,19 @@
+{
+  "id": "isolate-side-effect-free-helper",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/order.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["submitOrder"],
+  "forbiddenText": ["fetch(", "console.log", "TODO"],
+  "requiredText": [
+    "function calculateOrderTotal",
+    "export function submitOrder",
+    "logger.info",
+    "saveOrder",
+    "calculateOrderTotal(items)"
+  ],
+  "validationCommand": "tsc --noEmit && bun test",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/order.ts by updating the file and extracting only the side-effect-free total calculation into a local helper named calculateOrderTotal. Use action update. Preserve exported function submitOrder. Side effects logger.info and saveOrder must stay in submitOrder and keep their order. Source: export function submitOrder(items: Array<{ price: number; quantity: number }>, logger: { info(message: string): void }, saveOrder: (total: number) => void) { let total = 0; for (const item of items) { total += item.price * item.quantity; } logger.info(`saving order ${total}`); saveOrder(total); return total; }"
+}

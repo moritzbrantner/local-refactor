@@ -1,0 +1,18 @@
+{
+  "id": "extract-duplicate-block",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/notifications.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["sendWelcomeEmail", "sendResetEmail"],
+  "forbiddenText": ["fetch(", "console.log", "TODO"],
+  "requiredText": [
+    "function formatRecipient",
+    "sendWelcomeEmail",
+    "sendResetEmail",
+    "formatRecipient(user)"
+  ],
+  "validationCommand": "tsc --noEmit && bun test",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/notifications.ts by updating the file and extracting the duplicated recipient formatting block into one local helper named formatRecipient. Use action update. Preserve exports sendWelcomeEmail and sendResetEmail. Source: export function sendWelcomeEmail(user: { name: string; email: string }) { const recipient = `${user.name} <${user.email}>`; return `Welcome ${recipient}`; } export function sendResetEmail(user: { name: string; email: string }) { const recipient = `${user.name} <${user.email}>`; return `Reset ${recipient}`; } Do not add unrelated code."
+}

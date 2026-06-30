@@ -1,0 +1,19 @@
+{
+  "id": "split-oversized-function",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/price.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["calculateInvoiceTotal"],
+  "forbiddenText": ["fetch(", "console.log", "TODO", "Math.random"],
+  "requiredText": [
+    "export function calculateInvoiceTotal",
+    "subtotal",
+    "discount",
+    "tax",
+    "return"
+  ],
+  "validationCommand": "tsc --noEmit && bun test",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/price.ts by updating the file and splitting the oversized calculateInvoiceTotal function into local helper functions named subtotal, discount, and tax. Use action update for src/price.ts. Preserve the exported function name calculateInvoiceTotal and preserve behavior. Source: export function calculateInvoiceTotal(items: Array<{ price: number; quantity: number }>, discountRate: number, taxRate: number) { let subtotal = 0; for (const item of items) { subtotal += item.price * item.quantity; } const discounted = subtotal - subtotal * discountRate; const tax = discounted * taxRate; return discounted + tax; } Do not export the helper functions."
+}

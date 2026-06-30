@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   createFixtureApi,
   defaultRepository,
+  missingModel,
+  readyModel,
   succeededRun,
 } from "./fixture-api";
 
@@ -42,9 +44,39 @@ test("user can configure and start a deterministic refactor run", async ({ page 
   });
 
   await expect(page.locator(".status.succeeded").first()).toBeVisible();
-  await expect(page.getByText("simplify-conditional")).toBeVisible();
+  await expect(page.getByText("simplify-conditional").first()).toBeVisible();
   await expect(page.getByText("qwen2.5-coder:7b").first()).toBeVisible();
   await expect(page.getByText("--- /tmp/local-refactor-fixture/src/sample.ts")).toBeVisible();
+  await expect(page.getByText("+  return value;")).toBeVisible();
+});
+
+test("user sees model availability and run safety settings before starting", async ({ page }) => {
+  const repository = defaultRepository();
+  const fixture = createFixtureApi({
+    repositories: [repository],
+    models: [readyModel(), missingModel()],
+  });
+  await fixture.install(page);
+
+  await page.goto("/");
+  await expect(page.getByRole("option", { name: /Qwen2.5 Coder 7B downloaded/ })).toHaveCount(1);
+  await expect(page.getByRole("option", { name: /DeepSeek Coder 6.7B not downloaded/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Tests read-only/ })).toHaveClass(/active/);
+
+  await page.getByLabel("Validation commands").fill("bun test\nbun run typecheck");
+  await page.getByLabel("Protected paths").fill("src/generated/**\ndist/**");
+  await page.getByRole("button", { name: /Start run/ }).click();
+
+  expect(fixture.lastRunRequest).toMatchObject({
+    repositoryId: "repo-1",
+    targetRelativePath: ".",
+    model: "qwen2.5-coder:7b",
+    testFileMode: "readOnly",
+    validationCommands: ["bun test", "bun run typecheck"],
+    protectedPaths: ["src/generated/**", "dist/**"],
+  });
+
+  await expect(page.getByText("qwen2.5-coder:7b").first()).toBeVisible();
   await expect(page.getByText("+  return value;")).toBeVisible();
 });
 

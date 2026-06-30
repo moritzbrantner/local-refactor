@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "local-refactor language catalog",
+  "type": "object",
+  "required": ["language", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "language": {
+      "type": "string",
+      "enum": ["typescript"]
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "language",
+          "name",
+          "category",
+          "status",
+          "safetyLevel",
+          "preserves",
+          "allowedWrites",
+          "requiresTypeInformation",
+          "requiresImportGraph",
+          "fixtureDirectory",
+          "description"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "language": {
+            "type": "string",
+            "enum": ["typescript"]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "control-flow",
+              "naming",
+              "extraction",
+              "deduplication",
+              "module-organization",
+              "type-structure",
+              "declaration-organization"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "cataloged",
+              "llm-eval-only",
+              "deterministic-rule",
+              "run-supported"
+            ]
+          },
+          "safetyLevel": {
+            "type": "string",
+            "enum": ["syntax-only", "typecheck-required", "test-required"]
+          },
+          "preserves": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "runtime-behavior",
+                "exports",
+                "public-api",
+                "typecheck",
+                "comments",
+                "formatting-intent"
+              ]
+            }
+          },
+          "allowedWrites": {
+            "type": "string",
+            "enum": ["single-file", "multi-file-within-target"]
+          },
+          "requiresTypeInformation": {
+            "type": "boolean"
+          },
+          "requiresImportGraph": {
+            "type": "boolean"
+          },
+          "fixtureDirectory": {
+            "type": "string",
+            "minLength": 1
+          },
+          "llmEvalDirectory": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

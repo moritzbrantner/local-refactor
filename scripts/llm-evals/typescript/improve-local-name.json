@@ -1,0 +1,18 @@
+{
+  "id": "improve-local-name",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/cart.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["summarizeCart"],
+  "forbiddenText": ["export function summarizeShoppingCart", "\"x\"", "['x']", "TODO"],
+  "requiredText": [
+    "export function summarizeCart",
+    "itemCount",
+    "subtotal",
+    "return { itemCount, subtotal }"
+  ],
+  "validationCommand": "tsc --noEmit",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/cart.ts by updating the file and improving only block-local variable names. Use action update. Preserve exported name summarizeCart and do not rename object property keys except to match the returned local variables itemCount and subtotal. Source: export function summarizeCart(items: Array<{ price: number }>) { const x = items.length; const y = items.reduce((total, item) => total + item.price, 0); return { itemCount: x, subtotal: y }; } Rename x to itemCount and y to subtotal, preserving behavior."
+}

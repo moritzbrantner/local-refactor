@@ -1,0 +1,21 @@
+{
+  "id": "convert-nested-if-to-guard-clause",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/access.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["accessLabel"],
+  "forbiddenText": ["fetch(", "console.log", "TODO"],
+  "requiredText": [
+    "export function accessLabel",
+    "if (!user)",
+    "if (!user.active)",
+    "return \"guest\"",
+    "return \"disabled\"",
+    "return \"admin\"",
+    "return \"member\""
+  ],
+  "validationCommand": "tsc --noEmit && bun test",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/access.ts by updating the file and converting nested if statements to guard clauses. Use action update. Preserve exported function accessLabel and all return values. Source: export function accessLabel(user: { active: boolean; admin: boolean } | null) { if (user) { if (user.active) { if (user.admin) { return \"admin\"; } return \"member\"; } return \"disabled\"; } return \"guest\"; } The refactor should use early returns: if (!user) return \"guest\"; if (!user.active) return \"disabled\"; then handle admin/member."
+}

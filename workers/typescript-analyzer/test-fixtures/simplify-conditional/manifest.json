@@ -1,0 +1,8 @@
+{
+  "ruleId": "simplify-conditional",
+  "language": "typescript",
+  "positiveCases": ["true-false", "false-true"],
+  "noEditCases": ["no-edit", "complex-condition"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": ["Analyzed"]
+}

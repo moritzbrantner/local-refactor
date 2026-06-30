@@ -28,6 +28,14 @@ type RunRecord = {
 type FixtureApiOptions = {
   repositories?: RepositoryRecord[];
   runs?: RunRecord[];
+  models?: ModelSummary[];
+};
+
+type ModelSummary = {
+  name: string;
+  label: string;
+  description: string;
+  downloaded: boolean;
 };
 
 const now = "2026-06-30T12:00:00.000Z";
@@ -35,12 +43,14 @@ const now = "2026-06-30T12:00:00.000Z";
 export class FixtureApi {
   repositories: RepositoryRecord[];
   runs: RunRecord[];
+  models: ModelSummary[];
   lastRunRequest: Record<string, unknown> | null = null;
   revertCalls: string[] = [];
 
   constructor(options: FixtureApiOptions = {}) {
     this.repositories = options.repositories ?? [];
     this.runs = options.runs ?? [];
+    this.models = options.models ?? [readyModel()];
   }
 
   async install(page: Page) {
@@ -66,14 +76,7 @@ export class FixtureApi {
       if (method === "GET" && path === "/api/models") {
         return fulfillJson(route, {
           provider: "ollama",
-          models: [
-            {
-              name: "qwen2.5-coder:7b",
-              label: "Qwen2.5 Coder 7B",
-              description: "Ready fixture model",
-              downloaded: true,
-            },
-          ],
+          models: this.models,
         });
       }
 
@@ -200,6 +203,24 @@ export function defaultRepository(): RepositoryRecord {
     available: true,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function readyModel(): ModelSummary {
+  return {
+    name: "qwen2.5-coder:7b",
+    label: "Qwen2.5 Coder 7B",
+    description: "Ready fixture model",
+    downloaded: true,
+  };
+}
+
+export function missingModel(): ModelSummary {
+  return {
+    name: "deepseek-coder:6.7b",
+    label: "DeepSeek Coder 6.7B",
+    description: "Missing fixture model",
+    downloaded: false,
   };
 }
 

@@ -97,3 +97,81 @@ Run settings from the web UI override global and project settings.
 ```sh
 bun run check
 ```
+
+`bun run check` is deterministic and does not require Ollama. It runs the Rust
+tests, refactoring catalog validation, TypeScript analyzer tests, web build, and
+browser workflow tests.
+
+## Local Verification
+
+Verification is split into fast deterministic checks and opt-in local model
+checks:
+
+| Command | Requires Ollama | Purpose |
+| --- | --- | --- |
+| `bun run check` | No | CI-safe Rust, catalog, analyzer, build, and browser checks. |
+| `bun run check:catalog` | No | Validates refactoring catalog metadata, fixtures, public rules, and run-supported gates. |
+| `bun run check:llm` | Yes | Runs the TypeScript LLM eval matrix against a real local model. |
+| `bun run check:local` | Yes | Runs deterministic checks plus the real local LLM eval matrix. |
+
+```sh
+bun run check
+bun run check:catalog
+bun run check:llm
+bun run check:llm -- --task extract-duplicate-block
+bun run check:local
+```
+
+`bun run check:llm` is opt-in because it requires Ollama and a local model. It
+defaults to:
+
+```sh
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+LOCAL_REFACTOR_LLM_MODEL=qwen2.5-coder:7b
+LOCAL_REFACTOR_LLM_TIMEOUT_MS=120000
+```
+
+The LLM eval connects to Ollama, checks that the selected model is installed, and
+asks it for strict JSON `patch-plan-v1` plans for TypeScript refactoring tasks.
+The current matrix covers split-file, split-function, duplicate-block
+extraction, local rename, pure-helper isolation, type extraction, and guard
+clause conversion. A passing run prints:
+
+```text
+LLM eval model: qwen2.5-coder:7b
+Ollama: reachable at http://127.0.0.1:11434
+Model: installed
+convert-nested-if-to-guard-clause: passed
+extract-duplicate-block: passed
+extract-type-definition: passed
+improve-local-name: passed
+isolate-side-effect-free-helper: passed
+split-file-by-responsibility: passed
+split-oversized-function: passed
+Result: passed
+```
+
+Failures explain whether Ollama is unreachable, the model is missing, generation
+timed out, the response was not JSON, a required split file was missing, or a
+required export was not preserved.
+
+## Refactoring Catalog
+
+TypeScript refactoring kinds are tracked in `refactoring-catalog/typescript.json`.
+Cataloged does not mean production-supported:
+
+- `cataloged`: documented target, not supported by analyzer or runs.
+- `llm-eval-only`: local model eval can produce a validated plan, but runs do
+  not execute it.
+- `deterministic-rule`: analyzer can produce edits for fixture cases.
+- `run-supported`: service lifecycle tests prove the rule works through
+  `/api/runs`.
+
+To add a new refactoring kind:
+
+1. Add a catalog entry with a unique kebab-case id.
+2. Add or create its fixture directory under `workers/typescript-analyzer/test-fixtures`.
+3. Add an analyzer manifest and fixtures if it is deterministic.
+4. Add an LLM eval task under `scripts/llm-evals/typescript` if it is model-planned.
+5. Add a service run-supported helper assertion before marking it `run-supported`.
+6. Run `bun run check` and, for model-planned kinds, `bun run check:llm`.

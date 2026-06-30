@@ -8,7 +8,7 @@ use local_refactor_service::{
     ServiceState,
 };
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, process::Command as StdCommand, sync::Arc, time::Duration};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -35,6 +35,149 @@ impl ModelGateway for ReadyModelGateway {
         _on_progress: ModelProgressSink,
     ) -> ModelFuture<'a, ()> {
         Box::pin(async { Ok(()) })
+    }
+}
+
+struct RunFixture {
+    source: &'static str,
+    expected_content: &'static str,
+    validation_commands: Vec<&'static str>,
+}
+
+#[tokio::test]
+async fn simplify_conditional_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "simplify-conditional",
+        RunFixture {
+            source: conditional_source(),
+            expected_content: "return value;",
+            validation_commands: vec!["grep -q 'return value;' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    let protected = harness.repo.path().join("src/generated/client.ts");
+    let test_file = harness.repo.path().join("src/sample.test.ts");
+    std::fs::create_dir_all(protected.parent().unwrap()).unwrap();
+    std::fs::write(&sample, fixture.source).unwrap();
+    std::fs::write(&protected, fixture.source).unwrap();
+    std::fs::write(&test_file, fixture.source).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": [rule_id],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "protectedPaths": ["src/generated/**"],
+                "validationCommands": fixture.validation_commands
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains(fixture.expected_content));
+    assert_eq!(std::fs::read_to_string(&protected).unwrap(), fixture.source);
+    assert_eq!(std::fs::read_to_string(&test_file).unwrap(), fixture.source);
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.status, StatusCode::OK);
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(diff.json["files"][0]["ruleId"], rule_id);
+
+    let review = harness
+        .get_json(&format!("/api/runs/{run_id}/review"))
+        .await;
+    assert_eq!(review.status, StatusCode::OK);
+    assert_eq!(review.json["run"]["id"], run_id);
+    assert_eq!(review.json["diff"]["files"].as_array().unwrap().len(), 1);
+
+    let event_messages = harness.event_messages(&run_id);
+    for expected in [
+        "Ensuring local model qwen2.5-coder:7b is downloaded",
+        "Collecting mutable TypeScript files",
+        "Running TypeScript analyzer worker",
+        "Applying deterministic analyzer edits",
+        "Running validation checks",
+        "Run completed successfully",
+    ] {
+        assert!(
+            event_messages
+                .iter()
+                .any(|message| message.contains(expected)),
+            "missing event containing {expected:?}: {event_messages:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn root_folder_run_applies_known_refactor_and_keeps_worktree_scoped() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    let protected = harness.repo.path().join("src/generated/client.ts");
+    let test_file = harness.repo.path().join("src/sample.test.ts");
+    std::fs::create_dir_all(protected.parent().unwrap()).unwrap();
+    let original = conditional_source();
+    std::fs::write(&sample, original).unwrap();
+    std::fs::write(&protected, original).unwrap();
+    std::fs::write(&test_file, original).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "protectedPaths": ["src/generated/**"],
+                "validationCommands": ["grep -q 'return value;' src/sample.ts"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("return value;"));
+    assert_eq!(std::fs::read_to_string(&protected).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(&test_file).unwrap(), original);
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        diff.json["files"][0]["filePath"].as_str().unwrap(),
+        sample.to_string_lossy()
+    );
+
+    let event_messages = harness.event_messages(&run_id);
+    for expected in [
+        "Ensuring local model qwen2.5-coder:7b is downloaded",
+        "Collecting mutable TypeScript files",
+        "Running TypeScript analyzer worker",
+        "Applying deterministic analyzer edits",
+        "Running validation checks",
+        "Run completed successfully",
+    ] {
+        assert!(
+            event_messages
+                .iter()
+                .any(|message| message.contains(expected)),
+            "missing event containing {expected:?}: {event_messages:#?}"
+        );
     }
 }
 
@@ -90,6 +233,80 @@ async fn run_applies_simplify_conditional_and_records_diff() {
 }
 
 #[tokio::test]
+async fn repository_source_run_resolves_target_folder_and_records_context() {
+    let harness = Harness::new_git_repo();
+    let src = harness.repo.path().join("src");
+    let sample = src.join("sample.ts");
+    let sibling = harness.repo.path().join("sibling.ts");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+    let sibling_original = conditional_source();
+    std::fs::write(&sibling, sibling_original).unwrap();
+
+    let created_repository = harness
+        .post_json(
+            "/api/repositories",
+            json!({
+                "path": harness.repo.path().to_string_lossy(),
+            }),
+        )
+        .await;
+    assert_eq!(created_repository.status, StatusCode::OK);
+    let repository_id = created_repository.json["id"].as_str().unwrap().to_string();
+
+    let repositories = harness.get_json("/api/repositories").await;
+    assert_eq!(repositories.status, StatusCode::OK);
+    assert!(repositories
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|repository| repository["id"] == repository_id));
+
+    let folders = harness
+        .get_json(&format!("/api/repositories/{repository_id}/folders?path=."))
+        .await;
+    assert_eq!(folders.status, StatusCode::OK);
+    assert!(folders.json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["relativePath"] == "src"));
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "repositoryId": repository_id,
+                "targetRelativePath": "src",
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["grep -q 'return value;' sample.ts"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["repositoryId"], repository_id);
+    assert_eq!(
+        run["repositoryRootPath"],
+        harness
+            .repo
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(run["targetRelativePath"], "src");
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("return value;"));
+    assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_original);
+}
+
+#[tokio::test]
 async fn run_reverts_patch_when_validation_fails() {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.ts");
@@ -123,6 +340,51 @@ async fn run_reverts_patch_when_validation_fails() {
 }
 
 #[tokio::test]
+async fn validation_failure_reverts_all_patches_in_reverse_order() {
+    let harness = Harness::new();
+    let first = harness.repo.path().join("src/a.ts");
+    let second = harness.repo.path().join("src/b.ts");
+    std::fs::create_dir_all(first.parent().unwrap()).unwrap();
+    let first_original = conditional_source().replace("isReady", "isFirstReady");
+    let second_original = conditional_source().replace("isReady", "isSecondReady");
+    std::fs::write(&first, &first_original).unwrap();
+    std::fs::write(&second, &second_original).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["exit 1"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "failed").await;
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), first_original);
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), second_original);
+    assert!(run["error"].as_str().unwrap().contains("validation failed"));
+    assert!(run["validationOutput"]
+        .as_str()
+        .unwrap()
+        .contains("$ exit 1"));
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 2);
+
+    let event_messages = harness.event_messages(&run_id);
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Validation failed")));
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Run failed and changes were reverted")));
+}
+
+#[tokio::test]
 async fn run_leaves_test_files_read_only_by_default() {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.test.ts");
@@ -148,6 +410,45 @@ async fn run_leaves_test_files_read_only_by_default() {
 
     let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
     assert!(diff.json["files"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn no_edit_run_records_analyzer_diagnostics() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(
+        &sample,
+        "export function label(value: string) {\n  return value.trim();\n}\n",
+    )
+    .unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert!(diff.json["files"].as_array().unwrap().is_empty());
+
+    let event_messages = harness.event_messages(&run_id);
+    assert!(event_messages.iter().any(|message| {
+        message.contains("Analyzed") && message.contains("1 function declarations")
+    }));
+    assert!(event_messages
+        .iter()
+        .any(|message| message == "Analyzer produced no edits"));
 }
 
 #[tokio::test]
@@ -211,6 +512,21 @@ struct TestResponse {
 impl Harness {
     fn new() -> Self {
         let repo = tempfile::tempdir().unwrap();
+        Self::with_repo(repo)
+    }
+
+    fn new_git_repo() -> Self {
+        let repo = tempfile::tempdir().unwrap();
+        let status = StdCommand::new("git")
+            .arg("init")
+            .arg(repo.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        Self::with_repo(repo)
+    }
+
+    fn with_repo(repo: TempDir) -> Self {
         let db_dir = tempfile::tempdir().unwrap();
         let db_path = db_dir.path().join("local-refactor.sqlite");
         let db = Arc::new(Database::open(db_path.clone()).unwrap());

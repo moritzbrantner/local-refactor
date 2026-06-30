@@ -1,0 +1,18 @@
+{
+  "id": "extract-type-definition",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/report.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["ReportInput", "renderReport"],
+  "forbiddenText": ["fetch(", "console.log", "TODO"],
+  "requiredText": [
+    "export type ReportInput",
+    "export function renderReport(input: ReportInput)",
+    "input.title",
+    "input.total"
+  ],
+  "validationCommand": "tsc --noEmit",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/report.ts by updating the file and extracting the inline object parameter type into an exported type named ReportInput. Use action update. Preserve exported function renderReport and runtime behavior. Source: export function renderReport(input: { title: string; total: number }) { return `${input.title}: ${input.total}`; }"
+}

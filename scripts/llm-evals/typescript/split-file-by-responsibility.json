@@ -1,0 +1,24 @@
+{
+  "id": "split-file-by-responsibility",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": [
+    "src/user.ts",
+    "src/user-format.ts",
+    "src/user-validation.ts"
+  ],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["User", "formatUserLabel", "isValidUser"],
+  "forbiddenText": ["fetch(", "console.log", "password", "TODO"],
+  "requiredText": [
+    "export type User",
+    "formatUserLabel",
+    "isValidUser",
+    "./user",
+    "`${user.name} <${user.email}>`",
+    "user.email.includes(\"@\")"
+  ],
+  "validationCommand": "tsc --noEmit",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/user-profile.ts into exactly three files: src/user.ts, src/user-format.ts, and src/user-validation.ts. Use action create for each file. Preserve exports User, formatUserLabel, and isValidUser. Source: export type User = { id: string; name: string; email: string; }; export function formatUserLabel(user: User) { return `${user.name} <${user.email}>`; } export function isValidUser(user: User) { return Boolean(user.id && user.email.includes(\"@\")); } Put only the User type in src/user.ts. Import User from \"./user\" in both function files. Do not add unrelated code."
+}
