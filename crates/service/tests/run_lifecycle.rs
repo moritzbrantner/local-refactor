@@ -213,16 +213,18 @@ impl Harness {
     }
 
     async fn poll_run(&self, run_id: &str, expected_status: &str) -> Value {
+        let mut last_response = Value::Null;
         for _ in 0..80 {
             let response = self.get_json(&format!("/api/runs/{run_id}")).await;
             assert_eq!(response.status, StatusCode::OK);
             if response.json["status"] == expected_status {
                 return response.json;
             }
+            last_response = response.json;
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        panic!("run {run_id} did not reach {expected_status}");
+        panic!("run {run_id} did not reach {expected_status}; last response: {last_response}");
     }
 
     fn event_messages(&self, run_id: &str) -> Vec<String> {

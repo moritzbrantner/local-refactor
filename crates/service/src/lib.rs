@@ -925,9 +925,31 @@ fn request_target_path(request: &RunCreateRequest) -> Result<&str> {
 }
 
 fn effective_config_for(target_path: &Path, run_layer: ConfigLayer) -> Result<EffectiveConfig> {
+    effective_config_for_paths(
+        target_path,
+        run_layer,
+        default_refactor_rules_path(),
+        global_config_path(),
+    )
+}
+
+fn effective_config_for_paths(
+    target_path: &Path,
+    run_layer: ConfigLayer,
+    default_path: Option<PathBuf>,
+    global_path: Option<PathBuf>,
+) -> Result<EffectiveConfig> {
     let mut config = EffectiveConfig::default();
 
-    if let Some(global_path) = global_config_path().filter(|path| path.exists()) {
+    if let Some(default_path) = default_path.filter(|path| path.exists()) {
+        let default_layer = load_config_file(&default_path)?;
+        config.apply_layer(ConfigLayer {
+            rules: default_layer.rules,
+            ..ConfigLayer::default()
+        });
+    }
+
+    if let Some(global_path) = global_path.filter(|path| path.exists()) {
         config.apply_layer(load_config_file(&global_path)?);
     }
 
@@ -945,6 +967,13 @@ fn effective_config_for(target_path: &Path, run_layer: ConfigLayer) -> Result<Ef
 
 fn global_config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("local-refactor/config.toml"))
+}
+
+fn default_refactor_rules_path() -> Option<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .map(|workspace_root| workspace_root.join("refactor-rules.toml"))
 }
 
 fn validation_root(target_path: &str) -> PathBuf {
@@ -1424,6 +1453,55 @@ mod tests {
             run.model.as_deref(),
             Some(model_provider::default_model_name())
         );
+    }
+
+    #[test]
+    fn effective_config_uses_default_refactor_rules_when_repository_has_no_rules_file() {
+        let repo = tempfile::tempdir().unwrap();
+        let default_dir = tempfile::tempdir().unwrap();
+        let default_path = default_dir.path().join("refactor-rules.toml");
+        std::fs::write(
+            &default_path,
+            r#"
+rules = ["from-default"]
+validationCommands = ["echo default validation"]
+"#,
+        )
+        .unwrap();
+
+        let config = effective_config_for_paths(
+            repo.path(),
+            ConfigLayer::default(),
+            Some(default_path),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(config.rules, vec!["from-default"]);
+        assert!(config.validation_commands.is_empty());
+    }
+
+    #[test]
+    fn repository_refactor_rules_override_default_refactor_rules() {
+        let repo = tempfile::tempdir().unwrap();
+        let default_dir = tempfile::tempdir().unwrap();
+        let default_path = default_dir.path().join("refactor-rules.toml");
+        std::fs::write(&default_path, r#"rules = ["from-default"]"#).unwrap();
+        std::fs::write(
+            repo.path().join("refactor-rules.toml"),
+            r#"rules = ["from-repository"]"#,
+        )
+        .unwrap();
+
+        let config = effective_config_for_paths(
+            repo.path(),
+            ConfigLayer::default(),
+            Some(default_path),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(config.rules, vec!["from-repository"]);
     }
 
     #[test]
