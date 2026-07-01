@@ -21,6 +21,8 @@ pub struct PatchPlanModelRequest {
     pub files: Vec<PatchPlanSourceFile>,
     pub validation_commands: Vec<String>,
     pub allowed_writes: AllowedWrites,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_context: Option<PatchPlanRepairContext>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,6 +30,13 @@ pub struct PatchPlanModelRequest {
 pub struct PatchPlanSourceFile {
     pub relative_path: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchPlanRepairContext {
+    pub attempt: u32,
+    pub validation_output: String,
 }
 
 #[derive(Debug, Clone)]
@@ -79,32 +88,39 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    [
-        "You are a local refactoring assistant.",
-        "Return only valid JSON. Do not use Markdown fences outside JSON strings.",
-        "The response must match patch-plan-v1 exactly:",
-        &format!(
+    let mut parts = vec![
+        "You are a local refactoring assistant.".to_string(),
+        "Return only valid JSON. Do not use Markdown fences outside JSON strings.".to_string(),
+        "The response must match patch-plan-v1 exactly:".to_string(),
+        format!(
             r#"{{ "summary": "short summary", "files": [{{ "path": "{}", "action": "update", "content": "{}" }}], "preservedExports": ["ExportName"], "validationCommand": "{}" }}"#,
             request.language.example_path(),
             request.language.example_content(),
             request.validation_commands.join(" && ")
         ),
-        &format!("Language: {}", request.language.display_name()),
-        &format!("Rule id: {}", request.rule_id),
-        &format!("Rule name: {}", request.rule_name),
-        &format!("Rule description: {}", request.rule_description),
-        &format!("Allowed writes: {:?}", request.allowed_writes),
-        &format!(
+        format!("Language: {}", request.language.display_name()),
+        format!("Rule id: {}", request.rule_id),
+        format!("Rule name: {}", request.rule_name),
+        format!("Rule description: {}", request.rule_description),
+        format!("Allowed writes: {:?}", request.allowed_writes),
+        format!(
             "Validation commands: {}",
             request.validation_commands.join(" && ")
         ),
-        "Use action update for existing files and action create for new files. Do not use action delete.",
-        "Preserve runtime behavior, exports, and typecheck unless the rule explicitly requires internal code movement.",
-        "Use the provided validation commands to reason about whether the refactor is safe.",
-        "Current mutable source files:",
-        &files,
-    ]
-    .join("\n\n")
+        "Use action update for existing files and action create for new files. Do not use action delete.".to_string(),
+        "Preserve runtime behavior, exports, and typecheck unless the rule explicitly requires internal code movement.".to_string(),
+        "Use the provided validation commands to reason about whether the refactor is safe.".to_string(),
+        "Current mutable source files:".to_string(),
+        files,
+    ];
+    if let Some(repair) = &request.repair_context {
+        parts.push("Repair context:".to_string());
+        parts.push(format!(
+            "Repair attempt: {}\nThe previous patch plan failed validation. Keep the current patched state unless a change is needed to satisfy validation. Validation output:\n{}",
+            repair.attempt, repair.validation_output
+        ));
+    }
+    parts.join("\n\n")
 }
 
 pub(crate) fn parse_patch_plan_response(
@@ -274,6 +290,7 @@ mod tests {
             }],
             validation_commands: vec!["true".to_string()],
             allowed_writes,
+            repair_context: None,
         }
     }
 

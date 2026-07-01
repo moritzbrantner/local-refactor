@@ -8,7 +8,15 @@ use local_refactor_service::{
     ServiceState,
 };
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Command as StdCommand, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Command as StdCommand,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -43,6 +51,39 @@ impl ModelGateway for ReadyModelGateway {
         request: local_refactor_service::PatchPlanModelRequest,
     ) -> ModelFuture<'a, String> {
         Box::pin(async move { Ok(fake_patch_plan(&request.rule_id)) })
+    }
+}
+
+struct RepairingModelGateway {
+    generated_plans: Arc<AtomicUsize>,
+}
+
+impl ModelGateway for RepairingModelGateway {
+    fn list_models(&self) -> ModelFuture<'_, ModelsResponse> {
+        ReadyModelGateway.list_models()
+    }
+
+    fn ensure_model_available_with_progress<'a>(
+        &'a self,
+        name: &'a str,
+        on_progress: ModelProgressSink,
+    ) -> ModelFuture<'a, ()> {
+        ReadyModelGateway.ensure_model_available_with_progress(name, on_progress)
+    }
+
+    fn generate_patch_plan<'a>(
+        &'a self,
+        _model: &'a str,
+        request: local_refactor_service::PatchPlanModelRequest,
+    ) -> ModelFuture<'a, String> {
+        self.generated_plans.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(if request.repair_context.is_some() {
+                repair_success_patch_plan()
+            } else {
+                fake_patch_plan(&request.rule_id)
+            })
+        })
     }
 }
 
@@ -299,13 +340,13 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
 
     let event_messages = harness.event_messages(&run_id);
     let mut expected_events = vec![
-        "Ensuring local model qwen2.5-coder:7b is downloaded",
         "Collecting mutable TypeScript files",
         "Running validation checks",
         "Run completed successfully",
     ];
     if is_model_planned(rule_id) {
         expected_events.extend([
+            "Ensuring local model qwen2.5-coder:7b is downloaded",
             "Requesting model patch plan",
             "Applying model patch-plan edits",
         ]);
@@ -409,7 +450,7 @@ async fn metrics_are_recorded_for_deterministic_runs() {
     .await;
 
     assert_number(&review["metrics"]["totalRunMs"]);
-    assert_number(&review["metrics"]["modelEnsureAvailableMs"]);
+    assert!(review["metrics"]["modelEnsureAvailableMs"].is_null());
     assert_number(&review["metrics"]["fileCollectionMs"]);
     assert_number(&review["metrics"]["analyzerPlanningMs"]);
     assert!(review["metrics"]["modelPlanningMs"].is_null());
@@ -449,7 +490,7 @@ async fn failed_validation_still_records_timing_metrics() {
     .await;
 
     assert_number(&review["metrics"]["totalRunMs"]);
-    assert_number(&review["metrics"]["modelEnsureAvailableMs"]);
+    assert!(review["metrics"]["modelEnsureAvailableMs"].is_null());
     assert_number(&review["metrics"]["fileCollectionMs"]);
     assert_number(&review["metrics"]["analyzerPlanningMs"]);
     assert_number(&review["metrics"]["editApplicationMs"]);
@@ -504,7 +545,6 @@ async fn root_folder_run_applies_known_refactor_and_keeps_worktree_scoped() {
 
     let event_messages = harness.event_messages(&run_id);
     for expected in [
-        "Ensuring local model qwen2.5-coder:7b is downloaded",
         "Collecting mutable TypeScript files",
         "Running TypeScript analyzer worker",
         "Applying deterministic analyzer edits",
@@ -741,7 +781,8 @@ async fn model_planned_validation_failure_removes_created_files() {
                 "targetPath": harness.repo.path().to_string_lossy(),
                 "rules": ["split-file-by-responsibility"],
                 "model": "qwen2.5-coder:7b",
-                "validationCommands": ["exit 1"]
+                "validationCommands": ["exit 1"],
+                "repairBudget": 0
             }),
         )
         .await;
@@ -756,6 +797,96 @@ async fn model_planned_validation_failure_removes_created_files() {
 
     let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
     assert_eq!(diff.json["files"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn model_planned_run_repairs_failed_validation_before_succeeding() {
+    let generated_plans = Arc::new(AtomicUsize::new(0));
+    let harness = Harness::with_repo_and_gateway(
+        tempfile::tempdir().unwrap(),
+        Arc::new(RepairingModelGateway {
+            generated_plans: generated_plans.clone(),
+        }),
+    );
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, duplicate_block_source()).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["extract-duplicate-block"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["grep -q 'repairSucceeded' src/sample.ts"],
+                "repairBudget": 2
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("repairSucceeded"));
+    assert_eq!(generated_plans.load(Ordering::SeqCst), 2);
+
+    let event_messages = harness.event_messages(&run_id);
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Attempting model repair 1/2")));
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Applying model repair patch-plan edits")));
+}
+
+#[tokio::test]
+async fn cancelling_run_after_edits_reverts_patch_journal() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    let original = conditional_source();
+    std::fs::write(&sample, original).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["sleep 1"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    for _ in 0..100 {
+        if std::fs::read_to_string(&sample)
+            .unwrap()
+            .contains("return value;")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("return value;"));
+
+    let cancelled = harness
+        .post_json(&format!("/api/runs/{run_id}/cancel"), json!({}))
+        .await;
+    assert_eq!(cancelled.status, StatusCode::NO_CONTENT);
+
+    let run = harness.poll_run(&run_id, "cancelled").await;
+    assert_eq!(run["status"], "cancelled");
+    assert_eq!(std::fs::read_to_string(&sample).unwrap(), original);
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -903,11 +1034,15 @@ impl Harness {
     }
 
     fn with_repo(repo: TempDir) -> Self {
+        Self::with_repo_and_gateway(repo, Arc::new(ReadyModelGateway))
+    }
+
+    fn with_repo_and_gateway(repo: TempDir, model_gateway: Arc<dyn ModelGateway>) -> Self {
         let db_dir = tempfile::tempdir().unwrap();
         let db_path = db_dir.path().join("local-refactor.sqlite");
         let db = Arc::new(Database::open(db_path.clone()).unwrap());
         let analyzer_script = analyzer_script_path();
-        let state = ServiceState::new(db.clone(), analyzer_script, Arc::new(ReadyModelGateway));
+        let state = ServiceState::new(db.clone(), analyzer_script, model_gateway);
         let app = router(state);
 
         Self {
@@ -1190,6 +1325,20 @@ fn fake_patch_plan(rule_id: &str) -> String {
         .to_string(),
         other => panic!("missing fake patch plan for {other}"),
     }
+}
+
+fn repair_success_patch_plan() -> String {
+    json!({
+        "summary": "Repair validation marker",
+        "files": [{
+            "path": "src/sample.ts",
+            "action": "update",
+            "content": "function formatRecipient(user: { name: string; email: string }) {\n  return `${user.name} <${user.email}>`;\n}\n\nexport const repairSucceeded = true;\n\nexport function sendWelcomeEmail(user: { name: string; email: string }) {\n  const recipient = formatRecipient(user);\n  return `Welcome ${recipient}`;\n}\n\nexport function sendResetEmail(user: { name: string; email: string }) {\n  const recipient = formatRecipient(user);\n  return `Reset ${recipient}`;\n}\n"
+        }],
+        "preservedExports": ["sendWelcomeEmail", "sendResetEmail", "repairSucceeded"],
+        "validationCommand": "grep -q 'repairSucceeded' src/sample.ts"
+    })
+    .to_string()
 }
 
 fn analyzer_script_path() -> PathBuf {

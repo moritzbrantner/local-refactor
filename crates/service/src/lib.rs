@@ -4,6 +4,9 @@ mod diff;
 mod edit_journal;
 mod model_provider;
 mod patch_plan;
+mod run_cancellation;
+mod run_executor;
+mod run_status;
 mod validation;
 
 use analyzer::AnalyzerRequest;
@@ -15,7 +18,6 @@ use axum::{
     routing::{get, patch, post},
     Json, Router,
 };
-use edit_journal::JournaledEdit;
 use local_refactor_core::{
     config::{
         default_protected_paths, find_project_config, load_config_file, ConfigLayer,
@@ -33,7 +35,6 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    time::Instant,
 };
 use tokio::process::Command;
 use tokio::sync::broadcast;
@@ -42,7 +43,9 @@ use uuid::Uuid;
 
 pub use db::{Database, RunEvent, RunMetrics};
 pub use model_provider::{ModelDownloadProgress, ModelSummary, ModelsResponse};
-pub use patch_plan::{PatchPlanEdit, PatchPlanModelRequest, PatchPlanSourceFile};
+pub use patch_plan::{
+    PatchPlanEdit, PatchPlanModelRequest, PatchPlanRepairContext, PatchPlanSourceFile,
+};
 
 pub type ModelProgressSink = Arc<dyn Fn(ModelDownloadProgress) + Send + Sync>;
 pub type ModelFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -94,6 +97,7 @@ pub struct ServiceState {
     analyzer_script: PathBuf,
     model_gateway: Arc<dyn ModelGateway>,
     events: broadcast::Sender<db::RunEvent>,
+    cancellations: run_cancellation::RunCancellationRegistry,
 }
 
 impl ServiceState {
@@ -108,6 +112,7 @@ impl ServiceState {
             analyzer_script,
             model_gateway,
             events,
+            cancellations: run_cancellation::RunCancellationRegistry::default(),
         }
     }
 }
@@ -564,17 +569,13 @@ async fn create_run(
         Ok(()) => {
             let state_for_job = state.clone();
             let id_for_job = id.clone();
+            let cancellation = state.cancellations.register(&id);
             tokio::spawn(async move {
-                let failure_state = state_for_job.clone();
-                if let Err(error) = run_job(state_for_job, id_for_job.clone(), request).await {
+                if let Err(error) =
+                    run_executor::run_job(state_for_job, id_for_job.clone(), request, cancellation)
+                        .await
+                {
                     tracing::error!(run_id = id_for_job, error = %error, "run failed");
-                    let _ = failure_state.db.set_error(&id_for_job, &error.to_string());
-                    let _ = transition(
-                        &failure_state,
-                        &id_for_job,
-                        "failed",
-                        &format!("Run failed: {error}"),
-                    );
                 }
             });
             (StatusCode::ACCEPTED, Json(RunCreatedResponse { id })).into_response()
@@ -620,7 +621,18 @@ async fn cancel_run(
     State(state): State<ServiceState>,
     AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
-    match transition(&state, &id, "cancelled", "Run cancelled by user") {
+    let active = state.cancellations.cancel(&id);
+    let result = if active {
+        append_run_event(&state, &id, "Run cancellation requested")
+    } else {
+        transition(
+            &state,
+            &id,
+            run_status::RunStatus::Cancelled,
+            "Run cancelled by user",
+        )
+    };
+    match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -636,7 +648,12 @@ async fn revert_run(
 ) -> impl IntoResponse {
     match edit_journal::revert_patches(&state.db, &id) {
         Ok(_) => {
-            let _ = transition(&state, &id, "reverted", "Run changes reverted");
+            let _ = transition(
+                &state,
+                &id,
+                run_status::RunStatus::Reverted,
+                "Run changes reverted",
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => (
@@ -758,235 +775,12 @@ fn diff_for_run(db: &Database, id: &str) -> Result<DiffResponse> {
     })
 }
 
-async fn run_job(state: ServiceState, id: String, request: RunCreateRequest) -> Result<()> {
-    let started = Instant::now();
-    let mut metrics = RunMetrics::default();
-    let result = run_job_inner(&state, &id, &request, &mut metrics).await;
-    metrics.total_run_ms = Some(elapsed_ms(started));
-    if let Err(error) = state.db.set_run_metrics(&id, &metrics) {
-        tracing::warn!(run_id = id, error = %error, "failed to persist run metrics");
-    }
-    result
-}
-
-async fn run_job_inner(
-    state: &ServiceState,
-    id: &str,
-    request: &RunCreateRequest,
-    metrics: &mut RunMetrics,
-) -> Result<()> {
-    let model = selected_model(&request)?;
-    let rules = effective_rules(&request);
-    transition(
-        state,
-        id,
-        "preparing",
-        &format!("Ensuring local model {model} is downloaded"),
-    )?;
-    let progress_state = state.clone();
-    let progress_run_id = id.to_string();
-    let started = Instant::now();
-    let ensure_result = state
-        .model_gateway
-        .ensure_model_available_with_progress(
-            &model,
-            Arc::new(move |progress| {
-                let _ = append_run_event(&progress_state, &progress_run_id, &progress.message);
-            }),
-        )
-        .await;
-    metrics.model_ensure_available_ms = Some(elapsed_ms(started));
-    ensure_result?;
-
-    for rule_id in rules {
-        let rule =
-            rule_by_id(&rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
-        transition(
-            state,
-            id,
-            "analyzing",
-            &format!("Collecting mutable {} files", rule.language.display_name()),
-        )?;
-        let started = Instant::now();
-        let prepared = prepare_source_request(request, rule.language);
-        add_elapsed_ms(&mut metrics.file_collection_ms, started);
-        let (policy, files) = prepared?;
-
-        match rule.execution_kind {
-            RuleExecutionKind::Deterministic => {
-                if rule.language != Language::TypeScript {
-                    return Err(anyhow!(
-                        "deterministic analyzer rules are only available for TypeScript"
-                    ));
-                }
-                transition(
-                    state,
-                    id,
-                    "planning",
-                    &format!("Running TypeScript analyzer worker for {}", rule.id),
-                )?;
-                let started = Instant::now();
-                let analyzer_response = analyzer::run(
-                    &state.analyzer_script,
-                    AnalyzerRequest {
-                        files,
-                        rules: vec![rule.id.to_string()],
-                    },
-                )
-                .await;
-                add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
-                let analyzer_response = analyzer_response?;
-
-                let started = Instant::now();
-                let edit_result = apply_analyzer_response(state, id, &policy, analyzer_response);
-                add_elapsed_ms(&mut metrics.edit_application_ms, started);
-                edit_result?;
-            }
-            RuleExecutionKind::ModelPlanned => {
-                transition(
-                    state,
-                    id,
-                    "planning",
-                    &format!("Requesting model patch plan for {}", rule.id),
-                )?;
-                let patch_request = patch_plan_request(rule, &request, &policy, &files)?;
-                let started = Instant::now();
-                let model_response = state
-                    .model_gateway
-                    .generate_patch_plan(&model, patch_request.clone())
-                    .await;
-                add_elapsed_ms(&mut metrics.model_planning_ms, started);
-                let model_response = model_response?;
-
-                let started = Instant::now();
-                let edits =
-                    patch_plan::parse_patch_plan_response(&patch_request, &policy, &model_response);
-                add_elapsed_ms(&mut metrics.patch_plan_validation_ms, started);
-                let edits = edits?;
-
-                let started = Instant::now();
-                let edit_result = apply_patch_plan_response(state, id, &policy, edits);
-                add_elapsed_ms(&mut metrics.edit_application_ms, started);
-                edit_result?;
-            }
-        }
-    }
-
-    transition(state, id, "validating", "Running validation checks")?;
-    let validation_dir = validation_root(request_target_path(&request)?);
-    let started = Instant::now();
-    let validation_result =
-        validation::run_commands(&validation_dir, &request.validation_commands).await;
-    metrics.validation_ms = Some(elapsed_ms(started));
-    let validation_result = validation_result?;
-    state
-        .db
-        .set_validation_output(id, &validation_result.output)?;
-
-    if validation_result.success {
-        transition(state, id, "succeeded", "Run completed successfully")?;
-        return Ok(());
-    }
-
-    transition(
-        state,
-        id,
-        "repairing",
-        "Validation failed; deterministic V1 cannot repair yet, reverting run changes",
-    )?;
-    edit_journal::revert_patches(&state.db, id)?;
-    state.db.set_error(
-        id,
-        &format!("validation failed: {}", validation_result.output),
-    )?;
-    transition(state, id, "failed", "Run failed and changes were reverted")?;
-    Ok(())
-}
-
-fn elapsed_ms(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-fn add_elapsed_ms(slot: &mut Option<u64>, started: Instant) {
-    let elapsed = elapsed_ms(started);
-    *slot = Some(slot.unwrap_or(0).saturating_add(elapsed));
-}
-
-fn apply_analyzer_response(
-    state: &ServiceState,
-    run_id: &str,
-    policy: &PathPolicy,
-    response: analyzer::AnalyzerResponse,
-) -> Result<()> {
-    for diagnostic in response.diagnostics {
-        state.db.append_event(run_id, &diagnostic)?;
-    }
-
-    if response.edits.is_empty() {
-        state
-            .db
-            .append_event(run_id, "Analyzer produced no edits")?;
-        return Ok(());
-    }
-
-    transition(
-        state,
-        run_id,
-        "editing",
-        "Applying deterministic analyzer edits",
-    )?;
-
-    let edits = response
-        .edits
-        .into_iter()
-        .map(JournaledEdit::from)
-        .collect::<Vec<_>>();
-    edit_journal::apply_edits(&state.db, run_id, policy, edits.clone())?;
-    for edit in edits {
-        state.db.append_event(
-            run_id,
-            &format!("Applied {} to {}", edit.rule_id, edit.file_path.display()),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn apply_patch_plan_response(
-    state: &ServiceState,
-    run_id: &str,
-    policy: &PathPolicy,
-    edits: Vec<PatchPlanEdit>,
-) -> Result<()> {
-    if edits.is_empty() {
-        state
-            .db
-            .append_event(run_id, "Patch plan produced no edits")?;
-        return Ok(());
-    }
-
-    transition(state, run_id, "editing", "Applying model patch-plan edits")?;
-
-    let edits = edits
-        .into_iter()
-        .map(JournaledEdit::from)
-        .collect::<Vec<_>>();
-    edit_journal::apply_edits(&state.db, run_id, policy, edits.clone())?;
-    for edit in edits {
-        state.db.append_event(
-            run_id,
-            &format!("Applied {} to {}", edit.rule_id, edit.file_path.display()),
-        )?;
-    }
-
-    Ok(())
-}
-
 fn patch_plan_request(
     rule: &local_refactor_core::rules::RuleDefinition,
     run_request: &RunCreateRequest,
     policy: &PathPolicy,
     files: &[String],
+    repair_context: Option<patch_plan::PatchPlanRepairContext>,
 ) -> Result<PatchPlanModelRequest> {
     let sources = files
         .iter()
@@ -1015,6 +809,7 @@ fn patch_plan_request(
         files: sources,
         validation_commands: run_request.validation_commands.clone(),
         allowed_writes: rule.allowed_writes,
+        repair_context,
     })
 }
 
@@ -1210,8 +1005,13 @@ fn validation_root(target_path: &str) -> PathBuf {
     }
 }
 
-fn transition(state: &ServiceState, run_id: &str, status: &str, message: &str) -> Result<()> {
-    state.db.update_status(run_id, status)?;
+fn transition(
+    state: &ServiceState,
+    run_id: &str,
+    status: run_status::RunStatus,
+    message: &str,
+) -> Result<()> {
+    state.db.update_status(run_id, status.as_str())?;
     append_run_event(state, run_id, message)
 }
 
