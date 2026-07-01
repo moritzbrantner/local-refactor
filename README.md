@@ -69,11 +69,14 @@ return value;
 
 Each write is recorded in SQLite before the file is changed. If validation commands fail, the service reverts its own writes from the patch journal.
 
-Rust support is model-planned. `rust-extract-helper-function` sends mutable `.rs`
-files to the local model with Rust-specific prompt context. When no validation
-commands are configured and the target is inside a Cargo project, the service
-detects `Cargo.toml` and runs `cargo check --all-targets`; if clippy is
-available it also runs `cargo clippy --all-targets -- -D warnings`.
+Rust support is model-planned. `rust-extract-helper-function` and
+`rust-add-documentation-comments` send mutable `.rs` files to the local model
+with Rust-specific prompt context. TypeScript documentation work is also
+available through `add-documentation-comments`, which adds JSDoc without
+changing runtime code. When no validation commands are configured and the target
+is inside a Cargo project, the service detects `Cargo.toml` and runs
+`cargo check --all-targets`; if clippy is available it also runs
+`cargo clippy --all-targets -- -D warnings`.
 
 ## Configuration
 
@@ -178,9 +181,9 @@ statuses explicit for future rules:
 
 Run-supported rules execute in one of two ways. Narrow, syntax-local TypeScript
 rules run through the TypeScript analyzer worker. Broader extraction, multi-file,
-and Rust rules request a local model `patch-plan-v1`, validate the plan against
-mutable scope, protected paths, and write mode, then write through the patch
-journal before running validation commands.
+documentation, and Rust rules request a local model `patch-plan-v1`, validate
+the plan against mutable scope, protected paths, and write mode, then write
+through the patch journal before running validation commands.
 
 To add a new refactoring kind:
 

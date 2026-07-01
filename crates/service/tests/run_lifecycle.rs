@@ -214,8 +214,30 @@ async fn extract_parameter_object_satisfies_run_supported_contract() {
 }
 
 #[tokio::test]
+async fn add_documentation_comments_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "add-documentation-comments",
+        RunFixture {
+            source: report_source(),
+            expected_content: "/** Renders a report summary label.",
+            validation_commands: vec!["grep -q 'Renders a report summary label' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn rust_extract_helper_function_satisfies_run_supported_contract() {
-    assert_rust_run_supported_rule("rust-extract-helper-function").await;
+    assert_rust_run_supported_rule("rust-extract-helper-function", "fn subtotal").await;
+}
+
+#[tokio::test]
+async fn rust_add_documentation_comments_satisfies_run_supported_contract() {
+    assert_rust_run_supported_rule(
+        "rust-add-documentation-comments",
+        "/// Calculates an invoice total after subtracting a discount.",
+    )
+    .await;
 }
 
 async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
@@ -303,7 +325,7 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
     }
 }
 
-async fn assert_rust_run_supported_rule(rule_id: &str) {
+async fn assert_rust_run_supported_rule(rule_id: &str, expected_content: &str) {
     let harness = Harness::new();
     let cargo_toml = harness.repo.path().join("Cargo.toml");
     let lib = harness.repo.path().join("src/lib.rs");
@@ -337,7 +359,7 @@ async fn assert_rust_run_supported_rule(rule_id: &str) {
     assert_eq!(run["status"], "succeeded");
     assert!(std::fs::read_to_string(&lib)
         .unwrap()
-        .contains("fn subtotal"));
+        .contains(expected_content));
     assert_eq!(run["validationCommands"].as_array().unwrap()[0], "true");
     assert!(run["validationOutput"].as_str().unwrap().contains("$ true"));
 
@@ -372,6 +394,7 @@ fn is_model_planned(rule_id: &str) -> bool {
             | "isolate-side-effect-free-helper"
             | "split-file-by-responsibility"
             | "extract-parameter-object"
+            | "add-documentation-comments"
     )
 }
 
@@ -1132,12 +1155,34 @@ fn fake_patch_plan(rule_id: &str) -> String {
             "validationCommand": "true"
         })
         .to_string(),
+        "add-documentation-comments" => json!({
+            "summary": "Add JSDoc to report rendering API",
+            "files": [{
+                "path": "src/sample.ts",
+                "action": "update",
+                "content": "/** Renders a report summary label. */\nexport function renderReport(input: { title: string; total: number }) {\n  return `${input.title}: ${input.total}`;\n}\n"
+            }],
+            "preservedExports": ["renderReport"],
+            "validationCommand": "true"
+        })
+        .to_string(),
         "rust-extract-helper-function" => json!({
             "summary": "Extract Rust subtotal helper",
             "files": [{
                 "path": "src/lib.rs",
                 "action": "update",
                 "content": "fn subtotal(items: &[(u32, u32)]) -> u32 {\n    items.iter().map(|&(price, quantity)| price * quantity).sum()\n}\n\npub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    subtotal(items).saturating_sub(discount_cents)\n}\n"
+            }],
+            "preservedExports": ["calculate_invoice_total"],
+            "validationCommand": "cargo check --all-targets"
+        })
+        .to_string(),
+        "rust-add-documentation-comments" => json!({
+            "summary": "Add Rust docs to invoice total API",
+            "files": [{
+                "path": "src/lib.rs",
+                "action": "update",
+                "content": "/// Calculates an invoice total after subtracting a discount.\npub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    let mut total = 0;\n    for &(price, quantity) in items {\n        total += price * quantity;\n    }\n    total.saturating_sub(discount_cents)\n}\n"
             }],
             "preservedExports": ["calculate_invoice_total"],
             "validationCommand": "cargo check --all-targets"

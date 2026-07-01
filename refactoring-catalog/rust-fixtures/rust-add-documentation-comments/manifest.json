@@ -1,0 +1,5 @@
+{
+  "id": "rust-add-documentation-comments",
+  "language": "rust",
+  "positive": ["public-api-docs"]
+}

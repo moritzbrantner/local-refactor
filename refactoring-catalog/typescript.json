@@ -176,6 +176,20 @@
       "fixtureDirectory": "workers/typescript-analyzer/test-fixtures/extract-parameter-object",
       "llmEvalDirectory": "scripts/llm-evals/typescript",
       "description": "Converts repeated parameter lists to a typed parameter object."
+    },
+    {
+      "id": "add-documentation-comments",
+      "language": "typescript",
+      "name": "Add Documentation Comments",
+      "category": "documentation",
+      "status": "run-supported",
+      "safetyLevel": "typecheck-required",
+      "preserves": ["runtime-behavior", "public-api", "typecheck", "comments"],
+      "allowedWrites": "single-file",
+      "requiresTypeInformation": false,
+      "requiresImportGraph": false,
+      "fixtureDirectory": "workers/typescript-analyzer/test-fixtures/add-documentation-comments",
+      "description": "Adds JSDoc comments to exported TypeScript APIs without changing runtime code."
     }
   ]
 }

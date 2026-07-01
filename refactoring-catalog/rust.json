@@ -14,6 +14,20 @@
       "requiresImportGraph": false,
       "fixtureDirectory": "refactoring-catalog/rust-fixtures/rust-extract-helper-function",
       "description": "Extracts cohesive Rust logic into a private helper while preserving public behavior and cargo validation."
+    },
+    {
+      "id": "rust-add-documentation-comments",
+      "language": "rust",
+      "name": "Add Rust Documentation Comments",
+      "category": "documentation",
+      "status": "run-supported",
+      "safetyLevel": "typecheck-required",
+      "preserves": ["runtime-behavior", "public-api", "typecheck", "comments"],
+      "allowedWrites": "single-file",
+      "requiresTypeInformation": false,
+      "requiresImportGraph": false,
+      "fixtureDirectory": "refactoring-catalog/rust-fixtures/rust-add-documentation-comments",
+      "description": "Adds Rust doc comments to public items without changing compiled behavior or cargo validation."
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "ruleId": "add-documentation-comments",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": []
+}

@@ -42,6 +42,10 @@ the target scope when the catalog allows multi-file writes. Plans may not delete
 files, write outside the mutable scope, write protected paths, or write read-only
 test files.
 
+Documentation rules are model-planned and single-file in this release. They may
+add JSDoc or Rust `///` comments, but the patch plan must preserve runtime code,
+public API, and typecheck or cargo validation.
+
 ## Promotion checklist
 
 ```text

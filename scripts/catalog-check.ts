@@ -48,6 +48,7 @@ const categories = new Set([
   "module-organization",
   "type-structure",
   "declaration-organization",
+  "documentation",
 ]);
 const statuses = new Set([
   "cataloged",

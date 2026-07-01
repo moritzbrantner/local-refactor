@@ -51,7 +51,8 @@
               "deduplication",
               "module-organization",
               "type-structure",
-              "declaration-organization"
+              "declaration-organization",
+              "documentation"
             ]
           },
           "status": {

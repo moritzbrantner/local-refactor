@@ -162,11 +162,28 @@ pub const INITIAL_RULES: &[RuleDefinition] = &[
         allowed_writes: AllowedWrites::MultiFileWithinTarget,
     },
     RuleDefinition {
+        id: "add-documentation-comments",
+        language: Language::TypeScript,
+        name: "Add Documentation Comments",
+        description:
+            "Adds JSDoc comments to exported TypeScript APIs without changing runtime code.",
+        execution_kind: RuleExecutionKind::ModelPlanned,
+        allowed_writes: AllowedWrites::SingleFile,
+    },
+    RuleDefinition {
         id: "rust-extract-helper-function",
         language: Language::Rust,
         name: "Extract Rust Helper Function",
         description:
             "Extracts cohesive Rust logic into a private helper while preserving public behavior.",
+        execution_kind: RuleExecutionKind::ModelPlanned,
+        allowed_writes: AllowedWrites::SingleFile,
+    },
+    RuleDefinition {
+        id: "rust-add-documentation-comments",
+        language: Language::Rust,
+        name: "Add Rust Documentation Comments",
+        description: "Adds Rust doc comments to public items without changing compiled behavior.",
         execution_kind: RuleExecutionKind::ModelPlanned,
         allowed_writes: AllowedWrites::SingleFile,
     },
