@@ -2,17 +2,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TestFileMode {
+    #[default]
     ReadOnly,
     Mutable,
-}
-
-impl Default for TestFileMode {
-    fn default() -> Self {
-        Self::ReadOnly
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

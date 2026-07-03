@@ -32,6 +32,9 @@ test("user can configure and start a deterministic refactor run", async ({ page 
   await page.getByLabel("Validation commands").fill("bun test\nbun run typecheck");
   await page.getByLabel("Protected paths").fill("src/generated/**\ndist/**");
   await page.getByRole("button", { name: /Start run/ }).click();
+  await expect(page.getByRole("heading", { name: "Review run" })).toBeVisible();
+  await expect(page.locator(".run-review").getByText("bun run typecheck")).toBeVisible();
+  await page.getByRole("button", { name: /Confirm and start run/ }).click();
 
   expect(fixture.lastRunRequest).toMatchObject({
     repositoryId: "repo-1",
@@ -66,6 +69,8 @@ test("user sees model availability and run safety settings before starting", asy
   await page.getByLabel("Validation commands").fill("bun test\nbun run typecheck");
   await page.getByLabel("Protected paths").fill("src/generated/**\ndist/**");
   await page.getByRole("button", { name: /Start run/ }).click();
+  await expect(page.getByText("validation runs on this machine through the local shell")).toBeVisible();
+  await page.getByRole("button", { name: /Confirm and start run/ }).click();
 
   expect(fixture.lastRunRequest).toMatchObject({
     repositoryId: "repo-1",

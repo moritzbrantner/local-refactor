@@ -384,6 +384,70 @@ select {
   margin-top: 18px;
 }
 
+.run-review {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  border: 1px solid #bfd8c9;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f5fbf7;
+}
+
+.run-review-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-review-title h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.compact-metadata {
+  margin-bottom: 0;
+}
+
+.trust-check {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e0e6eb;
+  border-radius: 6px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.trust-check h4,
+.trust-check p,
+.trust-check ul {
+  margin: 0;
+}
+
+.trust-check h4 {
+  color: #334155;
+  font-size: 13px;
+}
+
+.trust-check p,
+.trust-check li {
+  overflow-wrap: anywhere;
+  color: #46515d;
+  font-size: 12px;
+}
+
+.trust-check ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+}
+
+.review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .history h3,
 .detail h3 {
   margin: 0 0 10px;
@@ -722,5 +786,9 @@ pre {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .review-actions {
+    display: grid;
   }
 }

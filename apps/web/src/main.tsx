@@ -16,141 +16,24 @@ import {
   Shield,
   Trash2,
 } from "lucide-react";
+import { API_BASE_URL, api } from "./api";
 import "./styles.css";
-
-type Rule = {
-  id: string;
-  language: "typescript" | "rust";
-  name: string;
-  description: string;
-};
-
-type RepositoryRecord = {
-  id: string;
-  label: string;
-  rootPath: string;
-  available: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type RepositoryPickResponse = {
-  repository: RepositoryRecord | null;
-};
-
-type FolderEntry = {
-  name: string;
-  relativePath: string;
-};
-
-type FolderChildrenResponse = {
-  repositoryId: string;
-  path: string;
-  entries: FolderEntry[];
-};
-
-type RunRecord = {
-  id: string;
-  targetPath: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  rules: string[];
-  model?: string;
-  testFileMode: string;
-  validationCommands: string[];
-  protectedPaths: string[];
-  validationOutput?: string;
-  error?: string;
-  repositoryId?: string;
-  repositoryRootPath?: string;
-  targetRelativePath?: string;
-};
-
-type RunEvent = {
-  id: number;
-  runId: string;
-  timestamp: string;
-  message: string;
-};
-
-type DiffFile = {
-  filePath: string;
-  ruleId?: string;
-  summary?: string;
-  diff: string;
-};
-
-type DiffResponse = {
-  runId: string;
-  files: DiffFile[];
-};
-
-type RunMetrics = {
-  totalRunMs: number | null;
-  modelEnsureAvailableMs: number | null;
-  fileCollectionMs: number | null;
-  analyzerPlanningMs: number | null;
-  modelPlanningMs: number | null;
-  patchPlanValidationMs: number | null;
-  editApplicationMs: number | null;
-  validationMs: number | null;
-};
-
-type RunReviewResponse = {
-  run: RunRecord;
-  events: RunEvent[];
-  diff: DiffResponse;
-  metrics: RunMetrics;
-};
-
-type ModelSummary = {
-  name: string;
-  label: string;
-  description: string;
-  downloaded: boolean;
-};
-
-type ModelsResponse = {
-  provider: string;
-  models: ModelSummary[];
-  error?: string;
-};
+import type {
+  FolderChildrenResponse,
+  FolderEntry,
+  ModelsResponse,
+  ModelSummary,
+  RepositoryPickResponse,
+  RepositoryRecord,
+  Rule,
+  RunDraft,
+  RunEvent,
+  RunRecord,
+  RunReviewResponse,
+} from "./types";
 
 const ROOT_PATH = ".";
 const DEFAULT_MODEL = "qwen2.5-coder:7b";
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-
-const api = {
-  async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${API_BASE_URL}${path}`);
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<T>;
-  },
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
-  },
-  async patch<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<T>;
-  },
-  async delete(path: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(await response.text());
-  },
-};
 
 function App() {
   const [rules, setRules] = useState<Rule[]>([]);
@@ -175,6 +58,7 @@ function App() {
   const [testFileMode, setTestFileMode] = useState<"readOnly" | "mutable">("readOnly");
   const [validationCommands, setValidationCommands] = useState("");
   const [protectedPaths, setProtectedPaths] = useState("src/generated/**");
+  const [pendingRunDraft, setPendingRunDraft] = useState<RunDraft | null>(null);
   const [message, setMessage] = useState("");
 
   const selectedRepository = useMemo(
@@ -368,18 +252,25 @@ function App() {
 
   async function startRun(event: React.FormEvent) {
     event.preventDefault();
-    if (!selectedRepositoryId) return;
+    const draft = buildRunDraft();
+    if (!draft) return;
     setMessage("");
+    setPendingRunDraft(draft);
+  }
+
+  async function confirmPendingRun() {
+    if (!pendingRunDraft) return;
     const response = await api.post<{ id: string }>("/api/runs", {
-      repositoryId: selectedRepositoryId,
-      targetRelativePath: selectedTargetRelativePath,
-      rules: selectedRules,
-      model: selectedModel,
-      testFileMode,
-      validationCommands: lines(validationCommands),
-      protectedPaths: lines(protectedPaths),
+      repositoryId: pendingRunDraft.repositoryId,
+      targetRelativePath: pendingRunDraft.targetRelativePath,
+      rules: pendingRunDraft.rules,
+      model: pendingRunDraft.model,
+      testFileMode: pendingRunDraft.testFileMode,
+      validationCommands: pendingRunDraft.validationCommands,
+      protectedPaths: pendingRunDraft.protectedPaths,
       repairBudget: 2,
     });
+    setPendingRunDraft(null);
     setSelectedRunId(response.id);
     setRunHistoryScope("repository");
     await refresh();
@@ -397,6 +288,34 @@ function App() {
         ? current.filter((id) => id !== ruleId)
         : [...current, ruleId],
     );
+  }
+
+  function buildRunDraft(): RunDraft | null {
+    if (!selectedRepositoryId || !selectedRepository) return null;
+    const selectedRuleRecords = selectedRules
+      .map((ruleId) => rules.find((rule) => rule.id === ruleId))
+      .filter((rule): rule is Rule => Boolean(rule));
+    const model = models.find((candidate) => candidate.name === selectedModel);
+    return {
+      repositoryId: selectedRepositoryId,
+      repositoryLabel: selectedRepository.label,
+      targetRelativePath: selectedTargetRelativePath,
+      targetLabel:
+        selectedTargetRelativePath === ROOT_PATH ? "Repository root" : selectedTargetRelativePath,
+      rules: selectedRules,
+      ruleLabels:
+        selectedRuleRecords.length > 0
+          ? selectedRuleRecords.map((rule) => rule.name)
+          : selectedRules,
+      model: selectedModel,
+      modelLabel: model?.label ?? selectedModel,
+      testFileMode,
+      validationCommands: lines(validationCommands),
+      protectedPaths: lines(protectedPaths),
+      usesModelPlannedRules: selectedRuleRecords.some(
+        (rule) => rule.executionKind === "modelPlanned",
+      ),
+    };
   }
 
   function renderFolder(relativePath: string, name: string, depth = 0) {
@@ -633,6 +552,91 @@ function App() {
               Start run
             </button>
           </form>
+
+          {pendingRunDraft && (
+            <section className="run-review">
+              <div className="run-review-title">
+                <Shield size={17} />
+                <h3>Review run</h3>
+              </div>
+              <dl className="metadata compact-metadata">
+                <div>
+                  <dt>Repository</dt>
+                  <dd>{pendingRunDraft.repositoryLabel}</dd>
+                </div>
+                <div>
+                  <dt>Mutable scope</dt>
+                  <dd>{pendingRunDraft.targetLabel}</dd>
+                </div>
+                <div>
+                  <dt>Model</dt>
+                  <dd>{pendingRunDraft.modelLabel}</dd>
+                </div>
+                <div>
+                  <dt>Tests</dt>
+                  <dd>{pendingRunDraft.testFileMode}</dd>
+                </div>
+              </dl>
+              <div className="settings-grid">
+                <section>
+                  <h4>Rules</h4>
+                  <ul>
+                    {pendingRunDraft.ruleLabels.map((rule) => (
+                      <li key={rule}>{rule}</li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h4>Protected paths</h4>
+                  {pendingRunDraft.protectedPaths.length > 0 ? (
+                    <ul>
+                      {pendingRunDraft.protectedPaths.map((path) => (
+                        <li key={path}>{path}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="empty">No custom protected paths.</p>
+                  )}
+                </section>
+              </div>
+              <section className="trust-check">
+                <h4>Local execution</h4>
+                {pendingRunDraft.validationCommands.length > 0 ? (
+                  <ul>
+                    {pendingRunDraft.validationCommands.map((command) => (
+                      <li key={command}>{command}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No custom validation commands were entered.</p>
+                )}
+                {(pendingRunDraft.validationCommands.length > 0 ||
+                  pendingRunDraft.usesModelPlannedRules) && (
+                  <p>
+                    Confirm only for repositories and commands you trust; validation runs on this
+                    machine through the local shell.
+                  </p>
+                )}
+              </section>
+              <div className="review-actions">
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => setPendingRunDraft(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={() => confirmPendingRun().catch((error) => setMessage(error.message))}
+                >
+                  <Play size={18} />
+                  Confirm and start run
+                </button>
+              </div>
+            </section>
+          )}
 
           <div className="runs-layout">
             <section className="history">

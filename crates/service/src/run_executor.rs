@@ -16,6 +16,12 @@ use std::{error::Error, fmt, sync::Arc, time::Instant};
 #[derive(Debug)]
 struct RunCancelled;
 
+struct RepairAttempt<'a> {
+    model: &'a str,
+    rule: &'a RuleDefinition,
+    initial_validation_output: String,
+}
+
 impl fmt::Display for RunCancelled {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("run was cancelled")
@@ -149,9 +155,11 @@ async fn run_job_inner(
                 request,
                 cancellation,
                 metrics,
-                model,
-                repair_rule,
-                validation_result.output.clone(),
+                RepairAttempt {
+                    model,
+                    rule: repair_rule,
+                    initial_validation_output: validation_result.output.clone(),
+                },
             )
             .await?;
             if repaired {
@@ -272,11 +280,9 @@ async fn attempt_repairs(
     request: &RunCreateRequest,
     cancellation: &RunCancellationToken,
     metrics: &mut RunMetrics,
-    model: &str,
-    rule: &RuleDefinition,
-    initial_validation_output: String,
+    repair: RepairAttempt<'_>,
 ) -> Result<bool> {
-    let mut validation_output = initial_validation_output;
+    let mut validation_output = repair.initial_validation_output;
     for attempt in 1..=request.repair_budget {
         check_cancelled(cancellation)?;
         transition(
@@ -289,11 +295,11 @@ async fn attempt_repairs(
             ),
         )?;
         let started = Instant::now();
-        let prepared = prepare_source_request(request, rule.language);
+        let prepared = prepare_source_request(request, repair.rule.language);
         add_elapsed_ms(&mut metrics.file_collection_ms, started);
         let (policy, files) = prepared?;
         let patch_request = patch_plan_request(
-            rule,
+            repair.rule,
             request,
             &policy,
             &files,
@@ -305,7 +311,7 @@ async fn attempt_repairs(
         let started = Instant::now();
         let model_response = state
             .model_gateway
-            .generate_patch_plan(model, patch_request.clone())
+            .generate_patch_plan(repair.model, patch_request.clone())
             .await;
         add_elapsed_ms(&mut metrics.model_planning_ms, started);
         let model_response = model_response?;
