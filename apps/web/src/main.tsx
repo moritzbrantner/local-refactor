@@ -9,6 +9,8 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  Maximize2,
+  Minimize2,
   Play,
   Plus,
   RefreshCcw,
@@ -60,6 +62,8 @@ function App() {
   const [protectedPaths, setProtectedPaths] = useState("src/generated/**");
   const [pendingRunDraft, setPendingRunDraft] = useState<RunDraft | null>(null);
   const [message, setMessage] = useState("");
+  const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(false);
+  const [foldersCollapsed, setFoldersCollapsed] = useState(false);
 
   const selectedRepository = useMemo(
     () => repositories.find((repository) => repository.id === selectedRepositoryId) ?? null,
@@ -369,91 +373,125 @@ function App() {
 
       {message && <div className="notice">{message}</div>}
 
-      <section className="workspace">
-        <section className="panel repositories">
+      <section
+        className={[
+          "workspace",
+          repositoriesCollapsed ? "repositories-collapsed" : "",
+          foldersCollapsed ? "folders-collapsed" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <section className={repositoriesCollapsed ? "panel repositories collapsed" : "panel repositories"}>
           <div className="panel-title">
             <GitBranch size={18} />
             <h2>Repositories</h2>
-          </div>
-
-          <div className="add-repository">
             <button
-              className="primary"
               type="button"
-              onClick={() => addRepository().catch((error) => setMessage(error.message))}
-              disabled={isPickingRepository}
+              className="icon-button panel-toggle"
+              aria-controls="repositories-panel-body"
+              aria-expanded={!repositoriesCollapsed}
+              aria-label={repositoriesCollapsed ? "Restore repositories" : "Minimize repositories"}
+              title={repositoriesCollapsed ? "Restore repositories" : "Minimize repositories"}
+              onClick={() => setRepositoriesCollapsed((current) => !current)}
             >
-              <Plus size={18} />
-              {isPickingRepository ? "Choosing folder" : "Choose root folder"}
+              {repositoriesCollapsed ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
             </button>
           </div>
 
-          <div className="repository-list">
-            {repositories.map((repository) => (
-              <article
-                className={
-                  repository.id === selectedRepositoryId
-                    ? "repository-row selected"
-                    : "repository-row"
-                }
-                key={repository.id}
+          <div id="repositories-panel-body" className="panel-body" hidden={repositoriesCollapsed}>
+            <div className="add-repository">
+              <button
+                className="primary"
+                type="button"
+                onClick={() => addRepository().catch((error) => setMessage(error.message))}
+                disabled={isPickingRepository}
               >
-                <div className="repository-select">
-                  <input
-                    value={editedLabels[repository.id] ?? repository.label}
-                    onChange={(event) =>
-                      setEditedLabels((current) => ({
-                        ...current,
-                        [repository.id]: event.target.value,
-                      }))
-                    }
-                    onBlur={() =>
-                      renameRepository(repository).catch((error) => setMessage(error.message))
-                    }
-                  />
+                <Plus size={18} />
+                {isPickingRepository ? "Choosing folder" : "Choose root folder"}
+              </button>
+            </div>
+
+            <div className="repository-list">
+              {repositories.map((repository) => (
+                <article
+                  className={
+                    repository.id === selectedRepositoryId
+                      ? "repository-row selected"
+                      : "repository-row"
+                  }
+                  key={repository.id}
+                >
+                  <div className="repository-select">
+                    <input
+                      value={editedLabels[repository.id] ?? repository.label}
+                      onChange={(event) =>
+                        setEditedLabels((current) => ({
+                          ...current,
+                          [repository.id]: event.target.value,
+                        }))
+                      }
+                      onBlur={() =>
+                        renameRepository(repository).catch((error) => setMessage(error.message))
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="repository-path"
+                      onClick={() => setSelectedRepositoryId(repository.id)}
+                    >
+                      <span className="path">{repository.rootPath}</span>
+                      {!repository.available && <span className="unavailable">Unavailable</span>}
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    className="repository-path"
-                    onClick={() => setSelectedRepositoryId(repository.id)}
+                    className="icon-button"
+                    onClick={() =>
+                      removeRepository(repository.id).catch((error) => setMessage(error.message))
+                    }
+                    title="Remove"
                   >
-                    <span className="path">{repository.rootPath}</span>
-                    {!repository.available && <span className="unavailable">Unavailable</span>}
+                    <Trash2 size={16} />
                   </button>
-                </div>
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() =>
-                    removeRepository(repository.id).catch((error) => setMessage(error.message))
-                  }
-                  title="Remove"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </article>
-            ))}
-            {repositories.length === 0 && <p className="empty">No repositories added.</p>}
+                </article>
+              ))}
+              {repositories.length === 0 && <p className="empty">No repositories added.</p>}
+            </div>
           </div>
         </section>
 
-        <section className="panel folders">
+        <section className={foldersCollapsed ? "panel folders collapsed" : "panel folders"}>
           <div className="panel-title">
             <Folder size={18} />
             <h2>Folders</h2>
+            <button
+              type="button"
+              className="icon-button panel-toggle"
+              aria-controls="folders-panel-body"
+              aria-expanded={!foldersCollapsed}
+              aria-label={foldersCollapsed ? "Restore folders" : "Minimize folders"}
+              title={foldersCollapsed ? "Restore folders" : "Minimize folders"}
+              onClick={() => setFoldersCollapsed((current) => !current)}
+            >
+              {foldersCollapsed ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
+            </button>
           </div>
-          {selectedRepository ? (
-            <>
-              <div className="selected-source">
-                <strong>{selectedRepository.label}</strong>
-                <span>{selectedRepository.rootPath}</span>
-              </div>
-              <div className="folder-tree">
-                {renderFolder(ROOT_PATH, selectedRepository.label)}
-              </div>
-            </>
-          ) : (
-            <p className="empty">Select a repository.</p>
-          )}
+          <div id="folders-panel-body" className="panel-body" hidden={foldersCollapsed}>
+            {selectedRepository ? (
+              <>
+                <div className="selected-source">
+                  <strong>{selectedRepository.label}</strong>
+                  <span>{selectedRepository.rootPath}</span>
+                </div>
+                <div className="folder-tree">
+                  {renderFolder(ROOT_PATH, selectedRepository.label)}
+                </div>
+              </>
+            ) : (
+              <p className="empty">Select a repository.</p>
+            )}
+          </div>
         </section>
 
         <section className="panel runs-panel">

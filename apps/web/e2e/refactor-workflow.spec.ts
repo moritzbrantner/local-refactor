@@ -21,6 +21,29 @@ test("user can choose a repository source and see folders", async ({ page }) => 
   await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
 });
 
+test("user can minimize and restore repository and folder sections", async ({ page }) => {
+  const repository = defaultRepository();
+  const fixture = createFixtureApi({ repositories: [repository] });
+  await fixture.install(page);
+
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /Choose root folder/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Minimize repositories" }).click();
+  await expect(page.getByRole("button", { name: /Choose root folder/ })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Restore repositories" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Minimize folders" }).click();
+  await expect(page.getByRole("button", { name: /src/ })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Restore folders" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Restore repositories" }).click();
+  await page.getByRole("button", { name: "Restore folders" }).click();
+  await expect(page.getByRole("button", { name: /Choose root folder/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
+});
+
 test("user can configure and start a deterministic refactor run", async ({ page }) => {
   const repository = defaultRepository();
   const fixture = createFixtureApi({ repositories: [repository] });

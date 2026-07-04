@@ -58,10 +58,21 @@ button:disabled {
 }
 
 .workspace {
+  --repositories-column: minmax(280px, 340px);
+  --folders-column: minmax(280px, 380px);
+
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(280px, 380px) minmax(460px, 1fr);
+  grid-template-columns: var(--repositories-column) var(--folders-column) minmax(460px, 1fr);
   gap: 16px;
   padding: 16px;
+}
+
+.workspace.repositories-collapsed {
+  --repositories-column: 64px;
+}
+
+.workspace.folders-collapsed {
+  --folders-column: 64px;
 }
 
 .panel {
@@ -83,6 +94,34 @@ button:disabled {
 .panel-title h2 {
   flex: 1;
   font-size: 16px;
+}
+
+.panel-toggle {
+  flex: 0 0 auto;
+}
+
+.panel.collapsed {
+  padding: 12px;
+}
+
+.panel.collapsed .panel-title {
+  flex-direction: column;
+  justify-content: flex-start;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.panel.collapsed .panel-title h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.panel-body[hidden] {
+  display: none;
 }
 
 .add-repository,
@@ -792,11 +831,19 @@ pre {
 
 @media (max-width: 1180px) {
   .workspace {
-    grid-template-columns: minmax(280px, 340px) 1fr;
+    grid-template-columns: var(--repositories-column) minmax(0, 1fr);
   }
 
   .runs-panel {
     grid-column: 1 / -1;
+  }
+
+  .workspace.folders-collapsed {
+    grid-template-columns: var(--repositories-column) var(--folders-column) minmax(0, 1fr);
+  }
+
+  .workspace.folders-collapsed .runs-panel {
+    grid-column: auto;
   }
 }
 
@@ -810,8 +857,27 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .workspace.repositories-collapsed,
+  .workspace.folders-collapsed,
+  .workspace.repositories-collapsed.folders-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .workspace {
     padding: 10px;
+  }
+
+  .panel.collapsed .panel-title {
+    flex-direction: row;
+  }
+
+  .panel.collapsed .panel-title h2 {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
   }
 
   .metadata {
