@@ -178,14 +178,15 @@ LOCAL_REFACTOR_LLM_TIMEOUT_MS=120000
 
 The LLM eval connects to Ollama, checks that the selected model is installed, and
 asks it for strict JSON `patch-plan-v1` plans for TypeScript refactoring tasks.
-The current matrix covers split-file, split-function, duplicate-block
-extraction, local rename, pure-helper isolation, type extraction, and guard
-clause conversion. A passing run prints:
+The current matrix covers documentation comments, split-file, split-function,
+duplicate-block extraction, local rename, pure-helper isolation, type
+extraction, and guard clause conversion. A passing run prints:
 
 ```text
 LLM eval model: qwen2.5-coder:7b
 Ollama: reachable at http://127.0.0.1:11434
 Model: installed
+add-documentation-comments: passed
 convert-nested-if-to-guard-clause: passed
 extract-duplicate-block: passed
 extract-type-definition: passed

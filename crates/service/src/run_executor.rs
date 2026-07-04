@@ -13,6 +13,8 @@ use local_refactor_core::{
 };
 use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
 
+const MAX_MODEL_PROMPT_CHARS: usize = 96_000;
+
 #[derive(Debug)]
 struct RunCancelled;
 
@@ -280,38 +282,20 @@ async fn execute_rule(
         }
         RuleExecutionKind::ModelPlanned => {
             let model = model.ok_or_else(|| anyhow!("model-planned rule requires a model"))?;
-            transition(
+            execute_model_planned_rule(
                 state,
                 id,
-                RunStatus::Planning,
-                &format!("Requesting model patch plan for {}", rule.id),
-            )?;
-            let patch_request = patch_plan_request(rule, request, &policy, &files, None)?;
-            let started = Instant::now();
-            let model_response = state
-                .model_gateway
-                .generate_patch_plan(model, patch_request.clone())
-                .await;
-            add_elapsed_ms(&mut metrics.model_planning_ms, started);
-            let model_response = model_response?;
-            check_cancelled(cancellation)?;
-
-            let started = Instant::now();
-            let edits =
-                patch_plan::parse_patch_plan_response(&patch_request, &policy, &model_response);
-            add_elapsed_ms(&mut metrics.patch_plan_validation_ms, started);
-            let edits = edits?;
-
-            let started = Instant::now();
-            let edit_result = apply_patch_plan_response(
-                state,
-                id,
+                request,
+                cancellation,
+                metrics,
+                model,
+                rule,
                 &policy,
-                edits,
+                &files,
+                None,
                 "Applying model patch-plan edits",
-            );
-            add_elapsed_ms(&mut metrics.edit_application_ms, started);
-            edit_result?;
+            )
+            .await?;
         }
     }
 
@@ -342,40 +326,23 @@ async fn attempt_repairs(
         let prepared = prepare_source_request(request, repair.rule.language);
         add_elapsed_ms(&mut metrics.file_collection_ms, started);
         let (policy, files) = prepared?;
-        let patch_request = patch_plan_request(
-            repair.rule,
+        execute_model_planned_rule(
+            state,
+            id,
             request,
+            cancellation,
+            metrics,
+            repair.model,
+            repair.rule,
             &policy,
             &files,
             Some(PatchPlanRepairContext {
                 attempt,
                 validation_output: truncated_validation_output(&validation_output),
             }),
-        )?;
-        let started = Instant::now();
-        let model_response = state
-            .model_gateway
-            .generate_patch_plan(repair.model, patch_request.clone())
-            .await;
-        add_elapsed_ms(&mut metrics.model_planning_ms, started);
-        let model_response = model_response?;
-        check_cancelled(cancellation)?;
-
-        let started = Instant::now();
-        let edits = patch_plan::parse_patch_plan_response(&patch_request, &policy, &model_response);
-        add_elapsed_ms(&mut metrics.patch_plan_validation_ms, started);
-        let edits = edits?;
-
-        let started = Instant::now();
-        let edit_result = apply_patch_plan_response(
-            state,
-            id,
-            &policy,
-            edits,
             "Applying model repair patch-plan edits",
-        );
-        add_elapsed_ms(&mut metrics.edit_application_ms, started);
-        edit_result?;
+        )
+        .await?;
 
         let validation_result = run_validation(state, id, request, metrics).await?;
         check_cancelled(cancellation)?;
@@ -389,6 +356,96 @@ async fn attempt_repairs(
         "validation failed after {} repair attempt(s): {}",
         request.repair_budget,
         validation_output.trim()
+    ))
+}
+
+async fn execute_model_planned_rule(
+    state: &ServiceState,
+    id: &str,
+    request: &RunCreateRequest,
+    cancellation: &RunCancellationToken,
+    metrics: &mut RunMetrics,
+    model: &str,
+    rule: &RuleDefinition,
+    policy: &PathPolicy,
+    files: &[String],
+    repair_context: Option<PatchPlanRepairContext>,
+    apply_message: &str,
+) -> Result<()> {
+    if files.is_empty() {
+        append_run_event(
+            state,
+            id,
+            &format!(
+                "No mutable {} files found for {}",
+                rule.language.display_name(),
+                rule.id
+            ),
+        )?;
+        return Ok(());
+    }
+
+    let total = files.len();
+    for (index, file) in files.iter().enumerate() {
+        check_cancelled(cancellation)?;
+        transition(
+            state,
+            id,
+            RunStatus::Planning,
+            &format!(
+                "Requesting model patch plan for {} ({}/{})",
+                rule.id,
+                index + 1,
+                total
+            ),
+        )?;
+        let single_file = vec![file.clone()];
+        let patch_request =
+            patch_plan_request(rule, request, policy, &single_file, repair_context.clone())?;
+        preflight_model_prompt(rule, &patch_request)?;
+
+        let started = Instant::now();
+        let model_response = state
+            .model_gateway
+            .generate_patch_plan(model, patch_request.clone())
+            .await;
+        add_elapsed_ms(&mut metrics.model_planning_ms, started);
+        let model_response = model_response?;
+        check_cancelled(cancellation)?;
+
+        let started = Instant::now();
+        let edits = patch_plan::parse_patch_plan_response(&patch_request, policy, &model_response);
+        add_elapsed_ms(&mut metrics.patch_plan_validation_ms, started);
+        let edits = edits?;
+
+        let started = Instant::now();
+        let edit_result = apply_patch_plan_response(state, id, policy, edits, apply_message);
+        add_elapsed_ms(&mut metrics.edit_application_ms, started);
+        edit_result?;
+    }
+
+    Ok(())
+}
+
+fn preflight_model_prompt(
+    rule: &RuleDefinition,
+    request: &patch_plan::PatchPlanModelRequest,
+) -> Result<()> {
+    let prompt_chars = patch_plan::build_prompt(request).chars().count();
+    if prompt_chars <= MAX_MODEL_PROMPT_CHARS {
+        return Ok(());
+    }
+
+    let file_path = request
+        .files
+        .first()
+        .map(|file| file.relative_path.as_str())
+        .unwrap_or("<no file>");
+    Err(anyhow!(
+        "model-planned request for {} is too large for {} ({} chars); target a smaller file or folder",
+        rule.id,
+        file_path,
+        prompt_chars
     ))
 }
 

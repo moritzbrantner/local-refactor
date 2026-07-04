@@ -877,6 +877,29 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.run-error {
+  margin: 0 0 12px;
+  border: 1px solid #f0b4ad;
+  border-radius: 6px;
+  background: #fff5f3;
+}
+
+.run-error h4 {
+  margin: 0;
+  border-bottom: 1px solid #f7d0cb;
+  padding: 8px 10px;
+  color: #8f1d14;
+  font-size: 12px;
+}
+
+.run-error pre {
+  margin: 0;
+  padding: 10px;
+  color: #8f1d14;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .error,
 .notice {
   margin: 16px;

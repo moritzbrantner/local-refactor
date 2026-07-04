@@ -59,7 +59,15 @@ struct RepairingModelGateway {
 }
 
 struct RecordingModelGateway {
-    last_request: Arc<Mutex<Option<local_refactor_service::PatchPlanModelRequest>>>,
+    requests: Arc<Mutex<Vec<local_refactor_service::PatchPlanModelRequest>>>,
+    response: RecordingModelResponse,
+}
+
+#[derive(Clone, Copy)]
+enum RecordingModelResponse {
+    FakePatchPlan,
+    DocumentationPerFile,
+    Noop,
 }
 
 impl ModelGateway for RepairingModelGateway {
@@ -109,8 +117,17 @@ impl ModelGateway for RecordingModelGateway {
         _model: &'a str,
         request: local_refactor_service::PatchPlanModelRequest,
     ) -> ModelFuture<'a, String> {
-        *self.last_request.lock().unwrap() = Some(request.clone());
-        Box::pin(async move { Ok(fake_patch_plan(&request.rule_id)) })
+        self.requests.lock().unwrap().push(request.clone());
+        let response = self.response;
+        Box::pin(async move {
+            Ok(match response {
+                RecordingModelResponse::FakePatchPlan => fake_patch_plan(&request.rule_id),
+                RecordingModelResponse::DocumentationPerFile => {
+                    documentation_patch_plan_for_request(&request)
+                }
+                RecordingModelResponse::Noop => noop_patch_plan(),
+            })
+        })
     }
 }
 
@@ -270,11 +287,12 @@ async fn split_file_by_responsibility_satisfies_run_supported_contract() {
 
 #[tokio::test]
 async fn model_planned_split_file_request_includes_planning_context() {
-    let last_request = Arc::new(Mutex::new(None));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let harness = Harness::with_repo_and_gateway(
         tempfile::tempdir().unwrap(),
         Arc::new(RecordingModelGateway {
-            last_request: last_request.clone(),
+            requests: requests.clone(),
+            response: RecordingModelResponse::FakePatchPlan,
         }),
     );
     let sample = harness.repo.path().join("src/sample.ts");
@@ -296,7 +314,7 @@ async fn model_planned_split_file_request_includes_planning_context() {
     let run_id = created.json["id"].as_str().unwrap().to_string();
     harness.poll_run(&run_id, "succeeded").await;
 
-    let request = last_request.lock().unwrap().clone().unwrap();
+    let request = requests.lock().unwrap().last().cloned().unwrap();
     assert_eq!(request.rule_id, "split-file-by-responsibility");
     assert!(request
         .planning_context
@@ -339,6 +357,108 @@ async fn add_documentation_comments_satisfies_run_supported_contract() {
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn model_planned_runs_request_one_primary_source_file_at_a_time() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let harness = Harness::with_repo_and_gateway(
+        tempfile::tempdir().unwrap(),
+        Arc::new(RecordingModelGateway {
+            requests: requests.clone(),
+            response: RecordingModelResponse::DocumentationPerFile,
+        }),
+    );
+    let alpha = harness.repo.path().join("src/alpha.ts");
+    let beta = harness.repo.path().join("src/beta.ts");
+    std::fs::create_dir_all(alpha.parent().unwrap()).unwrap();
+    std::fs::write(
+        &alpha,
+        "export function alpha() {\n  return \"alpha\";\n}\n",
+    )
+    .unwrap();
+    std::fs::write(&beta, "export function beta() {\n  return \"beta\";\n}\n").unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["add-documentation-comments"],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "validationCommands": [
+                    "grep -q 'Documentation for src/alpha.ts' src/alpha.ts",
+                    "grep -q 'Documentation for src/beta.ts' src/beta.ts"
+                ]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, "succeeded").await;
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0].files.len(), 1);
+    assert_eq!(recorded[0].files[0].relative_path, "src/alpha.ts");
+    assert_eq!(recorded[1].files.len(), 1);
+    assert_eq!(recorded[1].files[0].relative_path, "src/beta.ts");
+    assert!(std::fs::read_to_string(&alpha)
+        .unwrap()
+        .contains("Documentation for src/alpha.ts"));
+    assert!(std::fs::read_to_string(&beta)
+        .unwrap()
+        .contains("Documentation for src/beta.ts"));
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 2);
+
+    let event_messages = harness.event_messages(&run_id);
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("add-documentation-comments (1/2)")));
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("add-documentation-comments (2/2)")));
+}
+
+#[tokio::test]
+async fn oversized_model_planned_file_fails_before_generation() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let harness = Harness::with_repo_and_gateway(
+        tempfile::tempdir().unwrap(),
+        Arc::new(RecordingModelGateway {
+            requests: requests.clone(),
+            response: RecordingModelResponse::Noop,
+        }),
+    );
+    let huge = harness.repo.path().join("src/huge.ts");
+    std::fs::create_dir_all(huge.parent().unwrap()).unwrap();
+    std::fs::write(
+        &huge,
+        format!("export const huge = `{}`;\n", "a".repeat(100_000)),
+    )
+    .unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["add-documentation-comments"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    let run = harness.poll_run(&run_id, "failed").await;
+
+    assert!(requests.lock().unwrap().is_empty());
+    let error = run["error"].as_str().unwrap();
+    assert!(error.contains("model-planned request for add-documentation-comments is too large"));
+    assert!(error.contains("src/huge.ts"));
+    assert!(error.contains("chars"));
 }
 
 #[tokio::test]
@@ -1459,6 +1579,40 @@ fn parameter_list_source() -> &'static str {
 
 fn rust_invoice_source() -> &'static str {
     "pub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    let mut total = 0;\n    for &(price, quantity) in items {\n        total += price * quantity;\n    }\n    total.saturating_sub(discount_cents)\n}\n"
+}
+
+fn documentation_patch_plan_for_request(
+    request: &local_refactor_service::PatchPlanModelRequest,
+) -> String {
+    let file = request
+        .files
+        .first()
+        .expect("documentation request has a file");
+    json!({
+        "summary": format!("Add documentation to {}", file.relative_path),
+        "files": [{
+            "path": file.relative_path.clone(),
+            "action": "update",
+            "content": format!(
+                "/** Documentation for {}. */\n{}",
+                file.relative_path,
+                file.content
+            )
+        }],
+        "preservedExports": [],
+        "validationCommand": "true"
+    })
+    .to_string()
+}
+
+fn noop_patch_plan() -> String {
+    json!({
+        "summary": "No safe change found",
+        "files": [],
+        "preservedExports": [],
+        "validationCommand": "true"
+    })
+    .to_string()
 }
 
 fn fake_patch_plan(rule_id: &str) -> String {

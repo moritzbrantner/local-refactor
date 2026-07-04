@@ -6,6 +6,7 @@ use local_refactor_core::{
     rules::{AllowedWrites, Language, RulePlanningContext, StackContext},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
@@ -102,6 +103,9 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
             request.language.example_content(),
             request.validation_commands.join(" && ")
         ),
+        "Use exactly these top-level keys: summary, files, preservedExports, validationCommand.".to_string(),
+        "If no safe change is available, return a patch-plan-v1 object with files: [] and a short summary explaining why.".to_string(),
+        r#"Do not return wrapper objects like { "response": "..." }."#.to_string(),
         format!("Language: {}", request.language.display_name()),
         format!("Rule id: {}", request.rule_id),
         format!("Rule name: {}", request.rule_name),
@@ -191,8 +195,10 @@ pub(crate) fn parse_patch_plan_response(
         ));
     }
 
-    let plan: PatchPlanV1 =
+    let value: Value =
         serde_json::from_str(response).with_context(|| "patch plan response was not valid JSON")?;
+    let plan: PatchPlanV1 = serde_json::from_value(value.clone())
+        .map_err(|error| patch_plan_shape_error(&value, error))?;
     validate_plan_shape(&plan)?;
     validate_allowed_writes(request.allowed_writes, &plan)?;
 
@@ -270,9 +276,6 @@ fn validate_plan_shape(plan: &PatchPlanV1) -> Result<()> {
     if plan.summary.trim().is_empty() {
         return Err(anyhow!("patch plan summary must be non-empty"));
     }
-    if plan.files.is_empty() {
-        return Err(anyhow!("patch plan files must be non-empty"));
-    }
     if plan.validation_command.trim().is_empty() {
         return Err(anyhow!("patch plan validationCommand must be non-empty"));
     }
@@ -283,10 +286,14 @@ fn validate_plan_shape(plan: &PatchPlanV1) -> Result<()> {
 fn validate_allowed_writes(allowed: AllowedWrites, plan: &PatchPlanV1) -> Result<()> {
     match allowed {
         AllowedWrites::SingleFile => {
-            if plan.files.len() != 1 {
-                return Err(anyhow!("single-file rules must update exactly one file"));
+            if plan.files.len() > 1 {
+                return Err(anyhow!("single-file rules may update at most one file"));
             }
-            if plan.files[0].action != PatchPlanAction::Update {
+            if plan
+                .files
+                .first()
+                .is_some_and(|file| file.action != PatchPlanAction::Update)
+            {
                 return Err(anyhow!(
                     "single-file rules may only update an existing file"
                 ));
@@ -305,6 +312,30 @@ fn validate_allowed_writes(allowed: AllowedWrites, plan: &PatchPlanV1) -> Result
         }
     }
     Ok(())
+}
+
+fn patch_plan_shape_error(value: &Value, error: serde_json::Error) -> anyhow::Error {
+    if let Some(object) = value.as_object() {
+        let keys = object.keys().cloned().collect::<Vec<_>>().join(", ");
+        let keys = if keys.is_empty() {
+            "<none>".to_string()
+        } else {
+            keys
+        };
+        if !object.contains_key("summary") {
+            return anyhow!(
+                "patch plan response did not match patch-plan-v1; expected top-level key `summary`, got keys: {}",
+                keys
+            );
+        }
+        return anyhow!(
+            "patch plan response did not match patch-plan-v1; got keys: {}; {}",
+            keys,
+            error
+        );
+    }
+
+    anyhow!("patch plan response did not match patch-plan-v1: {error}")
 }
 
 fn validate_relative_path(path: &str) -> Result<PathBuf> {
@@ -376,6 +407,9 @@ mod tests {
         assert!(prompt.contains("TypeScript backend"));
         assert!(prompt.contains("Allowed writes: MultiFileWithinTarget"));
         assert!(prompt.contains("Test file mode: Mutable"));
+        assert!(prompt.contains("Use exactly these top-level keys"));
+        assert!(prompt.contains("files: []"));
+        assert!(prompt.contains("Do not return wrapper objects"));
     }
 
     #[test]
@@ -426,6 +460,94 @@ mod tests {
         assert!(error
             .to_string()
             .contains("single-file rules may only update"));
+    }
+
+    #[test]
+    fn rejects_single_file_deletes() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"summary":"x","files":[{"path":"src/sample.ts","action":"delete"}],"preservedExports":[],"validationCommand":"true"}"#;
+
+        let error = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("single-file rules may only update"));
+    }
+
+    #[test]
+    fn accepts_noop_patch_plans() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"summary":"No safe documentation change found","files":[],"preservedExports":[],"validationCommand":"true"}"#;
+
+        let edits = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap();
+
+        assert!(edits.is_empty());
+    }
+
+    #[test]
+    fn rejects_single_file_multiple_updates() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"summary":"x","files":[{"path":"src/a.ts","action":"update","content":"x"},{"path":"src/b.ts","action":"update","content":"x"}],"preservedExports":[],"validationCommand":"true"}"#;
+
+        let error = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("single-file rules may update at most one file"));
+    }
+
+    #[test]
+    fn reports_wrapper_response_keys() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"response":"I'm sorry, but I can't assist with that request."}"#;
+
+        let error = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("expected top-level key `summary`"));
+        assert!(message.contains("got keys: response"));
+    }
+
+    #[test]
+    fn reports_keys_for_incomplete_patch_plan_objects() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"summary":"x","response":"not a plan"}"#;
+
+        let error = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("got keys: response, summary"));
+        assert!(message.contains("missing field"));
     }
 
     #[test]

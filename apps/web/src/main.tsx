@@ -968,7 +968,12 @@ function App() {
                   {selectedRun.validationOutput && (
                     <pre className="log">{selectedRun.validationOutput}</pre>
                   )}
-                  {selectedRun.error && <pre className="error">{selectedRun.error}</pre>}
+                  {selectedRun.error && (
+                    <section className="run-error">
+                      <h4>Run error</h4>
+                      <pre>{selectedRun.error}</pre>
+                    </section>
+                  )}
 
                   {downloadProgress && (
                     <div className="download-progress">

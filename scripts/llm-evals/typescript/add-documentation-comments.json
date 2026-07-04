@@ -1,0 +1,18 @@
+{
+  "id": "add-documentation-comments",
+  "language": "typescript",
+  "modelDefault": "qwen2.5-coder:7b",
+  "responseSchema": "patch-plan-v1",
+  "requiredFiles": ["src/report.ts"],
+  "forbiddenPaths": ["../", "/"],
+  "requiredExports": ["renderReport"],
+  "forbiddenText": ["fetch(", "console.log", "TODO", "export type ReportInput"],
+  "requiredText": [
+    "/** Renders a report summary label. */",
+    "export function renderReport",
+    "input.title",
+    "input.total"
+  ],
+  "validationCommand": "tsc --noEmit",
+  "prompt": "Return only JSON matching patch-plan-v1. Refactor src/report.ts by updating the file and adding exactly this JSDoc comment immediately before the exported function: /** Renders a report summary label. */ Use action update. Preserve exported function renderReport and do not change runtime code or extract types. Source: export function renderReport(input: { title: string; total: number }) { return `${input.title}: ${input.total}`; }"
+}
