@@ -18,7 +18,7 @@ test("user can choose a repository source and see folders", async ({ page }) => 
 
   await expect(page.locator("input").first()).toHaveValue("Fixture Repo");
   await expect(page.getByText("/tmp/local-refactor-fixture").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "src", exact: true })).toBeVisible();
 });
 
 test("user can minimize and restore repository and folder sections", async ({ page }) => {
@@ -28,20 +28,20 @@ test("user can minimize and restore repository and folder sections", async ({ pa
 
   await page.goto("/");
   await expect(page.getByRole("button", { name: /Choose root folder/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "src", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Minimize repositories" }).click();
   await expect(page.getByRole("button", { name: /Choose root folder/ })).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Restore repositories" })).toBeVisible();
 
   await page.getByRole("button", { name: "Minimize folders" }).click();
-  await expect(page.getByRole("button", { name: /src/ })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "src", exact: true })).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Restore folders" })).toBeVisible();
 
   await page.getByRole("button", { name: "Restore repositories" }).click();
   await page.getByRole("button", { name: "Restore folders" }).click();
   await expect(page.getByRole("button", { name: /Choose root folder/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /src/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "src", exact: true })).toBeVisible();
 });
 
 test("user can configure and start a deterministic refactor run", async ({ page }) => {
@@ -51,9 +51,7 @@ test("user can configure and start a deterministic refactor run", async ({ page 
 
   await page.goto("/");
   await expect(page.locator("input").first()).toHaveValue("Fixture Repo");
-  await expect(page.getByText("Test Required").first()).toBeVisible();
-  await expect(page.getByText("Single File").first()).toBeVisible();
-  await expect(page.getByText("Candidate files").first()).toBeVisible();
+  await expect(page.getByText("Candidate File Preview").first()).toBeVisible();
   await expect(page.getByText("src/sample.ts").first()).toBeVisible();
   await expect(page.getByText("2 total").first()).toBeVisible();
 
@@ -61,7 +59,7 @@ test("user can configure and start a deterministic refactor run", async ({ page 
   await page.getByLabel("Protected paths").fill("src/generated/**\ndist/**");
   await page.getByRole("button", { name: /Start run/ }).click();
   await expect(page.getByRole("heading", { name: "Review run" })).toBeVisible();
-  await expect(page.locator(".run-review").getByText("Candidate files")).toBeVisible();
+  await expect(page.locator(".run-review").getByText("Candidate File Preview")).toBeVisible();
   await expect(page.locator(".run-review").getByText("src/other.ts")).toBeVisible();
   await expect(page.locator(".run-review").getByText("Preserves Runtime Behavior, Typecheck")).toBeVisible();
   await expect(page.locator(".run-review").getByText("bun run typecheck")).toBeVisible();
@@ -94,6 +92,58 @@ test("user can configure and start a deterministic refactor run", async ({ page 
   await expect(page.getByText("+  return value;")).toBeVisible();
 });
 
+test("user can collapse rules and expand rule details", async ({ page }) => {
+  const repository = defaultRepository();
+  const fixture = createFixtureApi({ repositories: [repository] });
+  await fixture.install(page);
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Collapse rules" }).click();
+  await expect(page.getByText("1 segments, 1 rules")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Automatic" })).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Expand rules" }).click();
+  await expect(page.getByRole("button", { name: "Automatic" })).toBeVisible();
+
+  const automaticRule = page.locator(".rule-plan").getByRole("button", { name: /src.*1 rules/ });
+  await automaticRule.click();
+  await expect(page.getByText("Test Required").first()).toBeVisible();
+  await automaticRule.click();
+  await expect(page.getByText("Test Required").first()).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Manual" }).click();
+  await page.getByRole("checkbox", { name: /Normalize Imports/ }).check();
+  await expect(page.getByRole("checkbox", { name: /Normalize Imports/ })).toBeChecked();
+  await page.getByRole("button", { name: "Expand Normalize Imports" }).click();
+  await expect(page.getByText("Typecheck Required").first()).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Normalize Imports/ })).toBeChecked();
+});
+
+test("user can preview candidate file source with highlighting", async ({ page }) => {
+  const repository = defaultRepository();
+  const fixture = createFixtureApi({ repositories: [repository] });
+  await fixture.install(page);
+
+  await page.goto("/");
+
+  await expect(page.getByText("Select a candidate file to preview.")).toBeVisible();
+  await page.getByRole("button", { name: "src/sample.ts" }).click();
+
+  await expect(page.locator(".file-preview-panel").getByText("src/sample.ts")).toBeVisible();
+  await expect(page.locator(".code-preview")).toContainText("export function isReady");
+  await expect(page.locator(".code-preview .cm-lineNumbers")).toBeVisible();
+  await expect(page.locator(".code-preview .cm-content span[class]").first()).toBeVisible();
+  await expect(page.getByText(/Would change .*Replaced boolean conditional/)).toBeVisible();
+  await expect(page.locator(".code-preview .cm-change-preview-line").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "src/other.ts" }).click();
+  await expect(page.getByText("No deterministic edits found.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Manual" }).click();
+  await expect(page.getByText("Select a candidate file to preview.")).toBeVisible();
+});
+
 test("candidate file preview updates with manual rules and test file mode", async ({ page }) => {
   const repository = defaultRepository();
   const fixture = createFixtureApi({ repositories: [repository] });
@@ -103,7 +153,7 @@ test("candidate file preview updates with manual rules and test file mode", asyn
   await expect(page.getByText("src/sample.ts").first()).toBeVisible();
 
   await page.getByRole("button", { name: "Manual" }).click();
-  await page.getByLabel("Normalize Imports").check();
+  await page.getByRole("checkbox", { name: /Normalize Imports/ }).check();
   await expect(page.getByText("src - Normalize Imports")).toBeVisible();
 
   await page.getByRole("button", { name: /Tests mutable/ }).click();

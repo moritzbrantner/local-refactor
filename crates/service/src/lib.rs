@@ -38,6 +38,8 @@ use tokio::sync::broadcast;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
 
+const MAX_FILE_PREVIEW_BYTES: u64 = 512 * 1024;
+
 pub use db::{Database, RunEvent, RunMetrics};
 pub use model_provider::{ModelDownloadProgress, ModelSummary, ModelsResponse};
 pub use patch_plan::{
@@ -197,6 +199,12 @@ struct FolderChildrenQuery {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryFilePreviewQuery {
+    path: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HealthResponse {
@@ -235,6 +243,26 @@ struct FolderChildrenResponse {
 struct FolderEntry {
     name: String,
     relative_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryFilePreviewResponse {
+    repository_id: String,
+    relative_path: String,
+    language: PreviewLanguage,
+    content: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+enum PreviewLanguage {
+    #[serde(rename = "typescript")]
+    TypeScript,
+    #[serde(rename = "rust")]
+    Rust,
+    #[serde(rename = "text")]
+    Text,
 }
 
 #[derive(Debug, Serialize)]
@@ -307,6 +335,10 @@ pub fn router(state: ServiceState) -> Router {
             patch(update_repository).delete(delete_repository),
         )
         .route("/api/repositories/{id}/folders", get(repository_folders))
+        .route(
+            "/api/repositories/{id}/file-preview",
+            get(repository_file_preview),
+        )
         .route("/api/analyze", post(analyze))
         .route("/api/runs", post(create_run).get(list_runs))
         .route(
@@ -530,6 +562,32 @@ async fn repository_folders(
         })
         .into_response(),
         Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn repository_file_preview(
+    State(state): State<ServiceState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<RepositoryFilePreviewQuery>,
+) -> impl IntoResponse {
+    match repository_file_preview_response(&state.db, &id, &query.path) {
+        Ok(preview) => Json(preview).into_response(),
+        Err(FilePreviewError::NotFound) => StatusCode::NOT_FOUND.into_response(),
+        Err(FilePreviewError::TooLarge(message)) => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+        Err(FilePreviewError::BadRequest(error)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+        Err(FilePreviewError::Internal(error)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
@@ -1006,6 +1064,47 @@ fn repository_label_from_root(root: &Path) -> String {
         .to_string()
 }
 
+#[derive(Debug)]
+enum FilePreviewError {
+    NotFound,
+    TooLarge(String),
+    BadRequest(anyhow::Error),
+    Internal(anyhow::Error),
+}
+
+fn repository_file_preview_response(
+    db: &Database,
+    repository_id: &str,
+    relative_path: &str,
+) -> Result<RepositoryFilePreviewResponse, FilePreviewError> {
+    let repository = db
+        .get_repository(repository_id)
+        .map_err(|error| FilePreviewError::Internal(error.into()))?
+        .ok_or(FilePreviewError::NotFound)?;
+    let root = std::fs::canonicalize(&repository.root_path)
+        .map_err(|error| FilePreviewError::BadRequest(error.into()))?;
+    let path =
+        resolve_repository_file(&root, relative_path).map_err(FilePreviewError::BadRequest)?;
+    let metadata =
+        std::fs::metadata(&path).map_err(|error| FilePreviewError::BadRequest(error.into()))?;
+    if metadata.len() > MAX_FILE_PREVIEW_BYTES {
+        return Err(FilePreviewError::TooLarge(format!(
+            "file preview is limited to {} bytes",
+            MAX_FILE_PREVIEW_BYTES
+        )));
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| FilePreviewError::BadRequest(error.into()))?;
+
+    Ok(RepositoryFilePreviewResponse {
+        repository_id: repository.id,
+        relative_path: relative_path_from_root(&root, &path),
+        language: preview_language_for_path(&path),
+        content,
+        size_bytes: metadata.len(),
+    })
+}
+
 fn resolve_repository_folder(root: &Path, relative_path: &str) -> Result<PathBuf> {
     let trimmed = relative_path.trim();
     let relative = Path::new(trimmed);
@@ -1035,6 +1134,41 @@ fn resolve_repository_folder(root: &Path, relative_path: &str) -> Result<PathBuf
         return Err(anyhow!("repository target must be a directory"));
     }
     Ok(folder)
+}
+
+fn resolve_repository_file(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    let trimmed = relative_path.trim();
+    let relative = Path::new(trimmed);
+    if trimmed.is_empty()
+        || trimmed == "."
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(anyhow!(
+            "repository file must be a relative path inside the repository root"
+        ));
+    }
+
+    let candidate = root.join(relative);
+    let metadata = std::fs::symlink_metadata(&candidate)
+        .with_context(|| format!("repository file does not exist: {}", candidate.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!("repository file preview does not follow symlinks"));
+    }
+    if !metadata.file_type().is_file() {
+        return Err(anyhow!("repository file preview target must be a file"));
+    }
+
+    let file = std::fs::canonicalize(&candidate)
+        .with_context(|| format!("repository file does not exist: {}", candidate.display()))?;
+    if !file.starts_with(root) {
+        return Err(anyhow!(
+            "repository file must stay inside the repository root"
+        ));
+    }
+    Ok(file)
 }
 
 fn folder_entries(root: &Path, folder: &Path) -> Result<Vec<FolderEntry>> {
@@ -1070,6 +1204,14 @@ fn relative_path_from_root(root: &Path, path: &Path) -> String {
         return ".".to_string();
     }
     relative.to_string_lossy().replace('\\', "/")
+}
+
+fn preview_language_for_path(path: &Path) -> PreviewLanguage {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("ts" | "tsx" | "js" | "jsx") => PreviewLanguage::TypeScript,
+        Some("rs") => PreviewLanguage::Rust,
+        _ => PreviewLanguage::Text,
+    }
 }
 
 fn is_hidden_picker_dir(name: &str) -> bool {
@@ -1621,6 +1763,113 @@ validationCommands = ["echo default validation"]
         assert!(resolve_repository_folder(&root, "src/..").is_err());
         assert!(resolve_repository_folder(&root, "../outside").is_err());
         assert!(resolve_repository_folder(&root, "/tmp").is_err());
+    }
+
+    #[test]
+    fn repository_file_preview_reads_safe_relative_file() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value: boolean = true;\n",
+        );
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+
+        let preview = repository_file_preview_response(&db, &repository.id, "src/app.ts").unwrap();
+
+        assert_eq!(preview.repository_id, repository.id);
+        assert_eq!(preview.relative_path, "src/app.ts");
+        assert_eq!(preview.language, PreviewLanguage::TypeScript);
+        assert_eq!(preview.content, "export const value: boolean = true;\n");
+        assert_eq!(preview.size_bytes, 36);
+
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["language"], "typescript");
+    }
+
+    #[test]
+    fn repository_file_preview_detects_rust_files() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(&repo.path().join("src/lib.rs"), "pub fn value() {}\n");
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+
+        let preview = repository_file_preview_response(&db, &repository.id, "src/lib.rs").unwrap();
+
+        assert_eq!(preview.language, PreviewLanguage::Rust);
+    }
+
+    #[test]
+    fn repository_file_preview_rejects_traversal_syntax() {
+        let repo = tempfile::tempdir().unwrap();
+        write_file(&repo.path().join("src/app.ts"), "");
+        let root = repo.path().canonicalize().unwrap();
+
+        assert!(resolve_repository_file(&root, "../outside.ts").is_err());
+        assert!(resolve_repository_file(&root, "/tmp/outside.ts").is_err());
+    }
+
+    #[test]
+    fn repository_file_preview_rejects_directories() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        let root = repo.path().canonicalize().unwrap();
+
+        let error = resolve_repository_file(&root, "src").unwrap_err();
+
+        assert!(error.to_string().contains("target must be a file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_file_preview_rejects_symlink_files() {
+        let repo = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("linked.ts")).unwrap();
+        let root = repo.path().canonicalize().unwrap();
+
+        let error = resolve_repository_file(&root, "linked.ts").unwrap_err();
+
+        assert!(error.to_string().contains("does not follow symlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_file_preview_rejects_files_outside_root_after_canonicalization() {
+        let repo = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write_file(
+            &outside.path().join("app.ts"),
+            "export const outside = true;\n",
+        );
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("linked")).unwrap();
+        let root = repo.path().canonicalize().unwrap();
+
+        let error = resolve_repository_file(&root, "linked/app.ts").unwrap_err();
+
+        assert!(error.to_string().contains("must stay inside"));
+    }
+
+    #[test]
+    fn repository_file_preview_rejects_large_files() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/large.ts"),
+            &"a".repeat((MAX_FILE_PREVIEW_BYTES + 1) as usize),
+        );
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+
+        let error =
+            repository_file_preview_response(&db, &repository.id, "src/large.ts").unwrap_err();
+
+        assert!(matches!(error, FilePreviewError::TooLarge(_)));
     }
 
     #[test]

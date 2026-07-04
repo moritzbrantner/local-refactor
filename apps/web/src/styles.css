@@ -340,6 +340,30 @@ select {
   font-weight: 400;
 }
 
+.collapsible-field {
+  border: 1px solid #e0e6eb;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.collapsible-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+}
+
+.collapse-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: #697583;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rule-metadata {
   display: flex;
   flex-wrap: wrap;
@@ -434,6 +458,84 @@ select {
   gap: 6px;
 }
 
+.rule-item-toggle {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: #17202a;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rule-item-toggle strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rule-item-toggle span {
+  color: #697583;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rule-item-toggle.compact-toggle {
+  grid-template-columns: 20px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.manual-rule-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dde4ea;
+  border-radius: 6px;
+  background: #fbfcfd;
+  padding: 8px;
+}
+
+.manual-rule-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-rule-check {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.manual-rule-check input {
+  width: 16px;
+  margin-top: 2px;
+}
+
+.manual-rule-detail {
+  display: grid;
+  gap: 4px;
+  padding-left: 26px;
+}
+
+.manual-rule-detail small {
+  color: #697583;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .rule-preserves {
   color: #697583;
   font-size: 12px;
@@ -488,6 +590,18 @@ select {
   padding-top: 0;
 }
 
+.candidate-preview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(300px, 1.1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.candidate-preview-layout.summary-only {
+  grid-template-columns: 1fr;
+}
+
 .candidate-group-title strong {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -509,12 +623,110 @@ select {
   overflow-wrap: anywhere;
 }
 
+.candidate-file-button {
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 5px;
+  color: #17202a;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.candidate-file-button:hover,
+.candidate-file-button.selected {
+  background: #dff3e9;
+}
+
 .candidate-hidden {
   color: #697583;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   font-weight: 700;
+}
+
+.file-preview-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #dde4ea;
+  border-radius: 6px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.file-preview-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.file-preview-title strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-title span {
+  flex: 0 0 auto;
+  color: #697583;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.code-preview {
+  min-width: 0;
+  height: 340px;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid #e0e6eb;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.code-preview .cm-editor {
+  height: 100%;
+  color: #17202a;
+  background: #fbfcfd;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
+.code-preview .cm-scroller {
+  overflow: auto;
+}
+
+.code-preview .cm-change-preview-line {
+  background: #fff3c4;
+}
+
+.change-preview-note,
+.change-preview-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.change-preview-note {
+  color: #536170;
+}
+
+.change-preview-note.strong {
+  color: #775c00;
+  font-weight: 700;
+}
+
+.change-preview-error {
+  color: #8f1d14;
+  font-weight: 600;
 }
 
 .model-select {
@@ -1052,6 +1264,10 @@ pre {
   }
 
   .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .candidate-preview-layout {
     grid-template-columns: 1fr;
   }
 

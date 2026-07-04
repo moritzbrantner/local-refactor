@@ -1,5 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { javascript } from "@codemirror/lang-javascript";
+import { rust } from "@codemirror/lang-rust";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import type { Extension } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
+import { Decoration, EditorView, lineNumbers } from "@codemirror/view";
 import {
   Activity,
   ChevronDown,
@@ -21,6 +27,8 @@ import {
 import { API_BASE_URL, api } from "./api";
 import "./styles.css";
 import type {
+  AnalyzerEdit,
+  AnalyzerResponse,
   CandidateFilePreviewResponse,
   FolderChildrenResponse,
   FolderEntry,
@@ -28,6 +36,7 @@ import type {
   ModelSummary,
   RepositoryPickResponse,
   RepositoryRecord,
+  RepositoryFilePreviewResponse,
   Rule,
   RuleSelectionPlan,
   RuleSelectionPlanResponse,
@@ -62,10 +71,20 @@ function App() {
   const [ruleSelectionPlan, setRuleSelectionPlan] = useState<RuleSelectionPlan | null>(null);
   const [ruleSelectionError, setRuleSelectionError] = useState("");
   const [ruleMode, setRuleMode] = useState<"automatic" | "manual">("automatic");
+  const [rulesSectionCollapsed, setRulesSectionCollapsed] = useState(false);
+  const [expandedRuleItems, setExpandedRuleItems] = useState<Set<string>>(() => new Set());
   const [candidateFilePreview, setCandidateFilePreview] =
     useState<CandidateFilePreviewResponse | null>(null);
   const [candidateFilePreviewError, setCandidateFilePreviewError] = useState("");
   const [candidateFilePreviewLoading, setCandidateFilePreviewLoading] = useState(false);
+  const [selectedCandidateFilePath, setSelectedCandidateFilePath] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<RepositoryFilePreviewResponse | null>(null);
+  const [filePreviewLoading, setFilePreviewLoading] = useState(false);
+  const [filePreviewError, setFilePreviewError] = useState("");
+  const [fileChangePreview, setFileChangePreview] = useState<AnalyzerEdit | null>(null);
+  const [fileChangePreviewLoading, setFileChangePreviewLoading] = useState(false);
+  const [fileChangePreviewError, setFileChangePreviewError] = useState("");
+  const [fileChangePreviewUnavailable, setFileChangePreviewUnavailable] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [testFileMode, setTestFileMode] = useState<"readOnly" | "mutable">("readOnly");
   const [validationCommands, setValidationCommands] = useState("");
@@ -219,6 +238,44 @@ function App() {
     protectedPaths,
     selectedModel,
   ]);
+
+  useEffect(() => {
+    setSelectedCandidateFilePath(null);
+    setFilePreview(null);
+    setFilePreviewError("");
+    setFilePreviewLoading(false);
+    setFileChangePreview(null);
+    setFileChangePreviewError("");
+    setFileChangePreviewLoading(false);
+    setFileChangePreviewUnavailable(false);
+  }, [
+    selectedRepositoryId,
+    selectedTargetRelativePath,
+    ruleMode,
+    selectedRules,
+    ruleSelectionPlan,
+    testFileMode,
+    protectedPaths,
+  ]);
+
+  useEffect(() => {
+    if (!candidateFilePreview || !selectedCandidateFilePath) return;
+    const visiblePaths = new Set(
+      candidateFilePreview.groups.flatMap((group) =>
+        group.files.map((file) => file.relativePath),
+      ),
+    );
+    if (!visiblePaths.has(selectedCandidateFilePath)) {
+      setSelectedCandidateFilePath(null);
+      setFilePreview(null);
+      setFilePreviewError("");
+      setFilePreviewLoading(false);
+      setFileChangePreview(null);
+      setFileChangePreviewError("");
+      setFileChangePreviewLoading(false);
+      setFileChangePreviewUnavailable(false);
+    }
+  }, [candidateFilePreview, selectedCandidateFilePath]);
 
   useEffect(() => {
     if (!selectedRepositoryId) {
@@ -435,6 +492,85 @@ function App() {
     );
   }
 
+  function toggleRuleItem(itemId: string) {
+    setExpandedRuleItems((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
+  async function loadFilePreview(relativePath: string) {
+    if (!selectedRepositoryId) return;
+    setSelectedCandidateFilePath(relativePath);
+    setFilePreview(null);
+    setFilePreviewError("");
+    setFilePreviewLoading(true);
+    setFileChangePreview(null);
+    setFileChangePreviewError("");
+    setFileChangePreviewLoading(false);
+    setFileChangePreviewUnavailable(false);
+    try {
+      const preview = await api.get<RepositoryFilePreviewResponse>(
+        `/api/repositories/${selectedRepositoryId}/file-preview?path=${encodeURIComponent(
+          relativePath,
+        )}`,
+      );
+      setFilePreview(preview);
+      await loadFileChangePreview(relativePath);
+    } catch (error) {
+      setFilePreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFilePreviewLoading(false);
+    }
+  }
+
+  async function loadFileChangePreview(relativePath: string) {
+    if (!selectedRepository) return;
+    const previewRuleIds = deterministicPreviewRuleIds(relativePath);
+    if (previewRuleIds.length === 0) {
+      setFileChangePreviewUnavailable(true);
+      return;
+    }
+
+    setFileChangePreviewLoading(true);
+    setFileChangePreviewError("");
+    setFileChangePreviewUnavailable(false);
+    try {
+      const response = await api.post<AnalyzerResponse>("/api/analyze", {
+        targetPath: repositoryFilePath(selectedRepository.rootPath, relativePath),
+        rules: previewRuleIds,
+        testFileMode,
+        protectedPaths: lines(protectedPaths),
+      });
+      setFileChangePreview(
+        response.edits.find((edit) => pathsEndWithSameFile(edit.filePath, relativePath)) ??
+          null,
+      );
+    } catch (error) {
+      setFileChangePreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFileChangePreviewLoading(false);
+    }
+  }
+
+  function deterministicPreviewRuleIds(relativePath: string): string[] {
+    if (!candidateFilePreview) return [];
+    const ruleIds = candidateFilePreview.groups
+      .filter(
+        (group) =>
+          group.language === "typescript" &&
+          group.files.some((file) => file.relativePath === relativePath),
+      )
+      .map((group) => group.ruleId)
+      .filter((ruleId) => {
+        const rule = rules.find((candidate) => candidate.id === ruleId);
+        return rule?.language === "typescript" && rule.executionKind === "deterministic";
+      });
+    return [...new Set(ruleIds)].sort();
+  }
+
   function buildRunDraft(): RunDraft | null {
     if (!selectedRepositoryId || !selectedRepository) return null;
     if (!candidateFilePreview || candidateFilePreviewLoading || candidateFilePreviewError) return null;
@@ -505,47 +641,124 @@ function App() {
     );
   }
 
-  function renderCandidateFilePreview(preview: CandidateFilePreviewResponse) {
+  function rulesSummaryText() {
+    if (ruleMode === "manual") {
+      return `${selectedRules.length} selected rules`;
+    }
+    if (ruleSelectionError) {
+      return "Automatic selection error";
+    }
+    if (!ruleSelectionPlan) {
+      return "Detecting rules";
+    }
+    return `${ruleSelectionPlan.segments.length} segments, ${
+      flattenedPlanRules(ruleSelectionPlan).length
+    } rules`;
+  }
+
+  function renderCandidateFilePreview(
+    preview: CandidateFilePreviewResponse,
+    options: { interactive?: boolean } = {},
+  ) {
+    const interactive = options.interactive ?? true;
     return (
       <section className="candidate-preview">
         <div className="candidate-preview-title">
-          <h4>Candidate files</h4>
+          <h4>Candidate File Preview</h4>
           <span>{preview.totalCandidateFiles} total</span>
         </div>
-        <div className="candidate-groups">
-          {preview.groups.map((group) => (
-            <article className="candidate-group" key={group.id}>
-              <div className="candidate-group-title">
-                <strong>{group.label}</strong>
-                <span>{group.totalFiles} files</span>
-              </div>
-              <div className="rule-metadata">
-                <span>{languageLabel(group.language)}</span>
-                <span>{group.ruleName}</span>
-                {group.segmentRelativePath !== undefined && (
-                  <span>
-                    {group.segmentRelativePath === ""
-                      ? "Repository root"
-                      : group.segmentRelativePath}
-                  </span>
-                )}
-              </div>
-              {group.files.length > 0 ? (
-                <ul className="candidate-file-list">
-                  {group.files.map((file) => (
-                    <li key={file.relativePath}>{file.relativePath}</li>
-                  ))}
-                  {group.hiddenFiles > 0 && (
-                    <li className="candidate-hidden">{group.hiddenFiles} more hidden</li>
+        <div className={interactive ? "candidate-preview-layout" : "candidate-preview-layout summary-only"}>
+          <div className="candidate-groups">
+            {preview.groups.map((group) => (
+              <article className="candidate-group" key={group.id}>
+                <div className="candidate-group-title">
+                  <strong>{group.label}</strong>
+                  <span>{group.totalFiles} files</span>
+                </div>
+                <div className="rule-metadata">
+                  <span>{languageLabel(group.language)}</span>
+                  <span>{group.ruleName}</span>
+                  {group.segmentRelativePath !== undefined && (
+                    <span>
+                      {group.segmentRelativePath === ""
+                        ? "Repository root"
+                        : group.segmentRelativePath}
+                    </span>
                   )}
-                </ul>
-              ) : (
-                <p className="empty">No mutable source files matched this group.</p>
+                </div>
+                {group.files.length > 0 ? (
+                  <ul className="candidate-file-list">
+                    {group.files.map((file) => (
+                      <li key={file.relativePath}>
+                        {interactive ? (
+                          <button
+                            type="button"
+                            className={
+                              selectedCandidateFilePath === file.relativePath
+                                ? "candidate-file-button selected"
+                                : "candidate-file-button"
+                            }
+                            onClick={() =>
+                              loadFilePreview(file.relativePath).catch((error) =>
+                                setMessage(error.message),
+                              )
+                            }
+                          >
+                            {file.relativePath}
+                          </button>
+                        ) : (
+                          file.relativePath
+                        )}
+                      </li>
+                    ))}
+                    {group.hiddenFiles > 0 && (
+                      <li className="candidate-hidden">{group.hiddenFiles} more hidden</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p className="empty">No mutable source files matched this group.</p>
+                )}
+              </article>
+            ))}
+            {preview.groups.length === 0 && (
+              <p className="empty">No candidate files matched this run configuration.</p>
+            )}
+          </div>
+          {interactive && (
+            <aside className="file-preview-panel">
+              {filePreviewLoading && <p className="empty">Loading file preview.</p>}
+              {filePreviewError && <small className="field-error">{filePreviewError}</small>}
+              {!filePreviewLoading && !filePreviewError && filePreview && (
+                <>
+                  <div className="file-preview-title">
+                    <strong>{filePreview.relativePath}</strong>
+                    <span>{formatBytes(filePreview.sizeBytes)}</span>
+                  </div>
+                  <CodePreview
+                    content={filePreview.content}
+                    highlightedLines={
+                      fileChangePreview
+                        ? changedLineNumbers(
+                            fileChangePreview.originalContent,
+                            fileChangePreview.newContent,
+                          )
+                        : []
+                    }
+                    language={filePreview.language}
+                    path={filePreview.relativePath}
+                  />
+                  <ChangePreviewSummary
+                    edit={fileChangePreview}
+                    loading={fileChangePreviewLoading}
+                    error={fileChangePreviewError}
+                    unavailable={fileChangePreviewUnavailable}
+                  />
+                </>
               )}
-            </article>
-          ))}
-          {preview.groups.length === 0 && (
-            <p className="empty">No candidate files matched this run configuration.</p>
+              {!filePreviewLoading && !filePreviewError && !filePreview && (
+                <p className="empty">Select a candidate file to preview.</p>
+              )}
+            </aside>
           )}
         </div>
       </section>
@@ -721,96 +934,168 @@ function App() {
               {modelsError && <small className="field-error">{modelsError}</small>}
             </div>
 
-            <div className="field-group">
-              <span>Rules</span>
-              <div className="segmented" aria-label="Rule selection mode">
+            <div className="field-group collapsible-field">
+              <div className="collapsible-title">
+                <span>Rules</span>
+                <span className="collapse-summary">{rulesSummaryText()}</span>
                 <button
                   type="button"
-                  className={ruleMode === "automatic" ? "active" : ""}
-                  onClick={() => setRuleMode("automatic")}
+                  className="icon-button"
+                  aria-controls="rules-panel-body"
+                  aria-expanded={!rulesSectionCollapsed}
+                  aria-label={rulesSectionCollapsed ? "Expand rules" : "Collapse rules"}
+                  title={rulesSectionCollapsed ? "Expand rules" : "Collapse rules"}
+                  onClick={() => setRulesSectionCollapsed((current) => !current)}
                 >
-                  Automatic
-                </button>
-                <button
-                  type="button"
-                  className={ruleMode === "manual" ? "active" : ""}
-                  onClick={() => setRuleMode("manual")}
-                >
-                  Manual
+                  {rulesSectionCollapsed ? (
+                    <ChevronRight size={16} />
+                  ) : (
+                    <ChevronDown size={16} />
+                  )}
                 </button>
               </div>
-              {ruleMode === "automatic" ? (
-                <div className="rule-plan">
-                  {ruleSelectionError && (
-                    <small className="field-error">{ruleSelectionError}</small>
-                  )}
-                  {ruleSelectionPlan?.segments.map((segment) => (
-                    <article className="rule-segment" key={segment.relativePath || "."}>
-                      <div className="rule-segment-title">
-                        <strong>
-                          {segment.relativePath === "" ? "Repository root" : segment.relativePath}
-                        </strong>
-                        <span>{segment.rules.length} rules</span>
-                      </div>
-                      <ul className="rule-summary-list">
-                        {ruleRecords(segment.rules, rules).map((rule) => (
-                          <li key={rule.id}>
-                            <strong>{rule.name}</strong>
-                            <span className="rule-metadata">
-                              <span>{languageLabel(rule.language)}</span>
-                              <span>
-                                {rule.executionKind === "modelPlanned"
-                                  ? "model planned"
-                                  : "deterministic"}
-                              </span>
-                              <span>{formatToken(rule.safetyLevel)}</span>
-                              <span>{formatToken(rule.allowedWrites)}</span>
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                      <ul className="reason-list">
-                        {segment.reasons.slice(0, 4).map((reason) => (
-                          <li key={`${reason.ruleId}-${reason.source}-${reason.message}`}>
-                            <span>{formatToken(reason.source)}</span>
-                            {reason.message}
-                          </li>
-                        ))}
-                      </ul>
-                    </article>
-                  ))}
-                  {ruleSelectionPlan && ruleSelectionPlan.segments.length === 0 && (
-                    <p className="empty">No automatic rules matched this target.</p>
-                  )}
-                  {!ruleSelectionPlan && !ruleSelectionError && (
-                    <p className="empty">Detecting rules for this target.</p>
-                  )}
-                </div>
-              ) : (
-                <div className="rule-list">
-                  {rules.map((rule) => (
-                    <label className="checkbox-row" key={rule.id}>
-                      <input
-                        type="checkbox"
-                        checked={selectedRules.includes(rule.id)}
-                        onChange={() => toggleRule(rule.id)}
-                      />
-                      <span>
-                        <span className="rule-heading">
-                          <strong>{rule.name}</strong>
-                          <span className="language-badge">{languageLabel(rule.language)}</span>
-                        </span>
-                        <span className="rule-metadata">
-                          <span>{rule.executionKind === "modelPlanned" ? "model planned" : "deterministic"}</span>
-                          <span>{formatToken(rule.safetyLevel)}</span>
-                          <span>{formatToken(rule.allowedWrites)}</span>
-                        </span>
-                        <small>{rule.description}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
+              {rulesSectionCollapsed && ruleSelectionError && (
+                <small className="field-error">{ruleSelectionError}</small>
               )}
+              <div id="rules-panel-body" hidden={rulesSectionCollapsed}>
+                <div className="segmented" aria-label="Rule selection mode">
+                  <button
+                    type="button"
+                    className={ruleMode === "automatic" ? "active" : ""}
+                    onClick={() => setRuleMode("automatic")}
+                  >
+                    Automatic
+                  </button>
+                  <button
+                    type="button"
+                    className={ruleMode === "manual" ? "active" : ""}
+                    onClick={() => setRuleMode("manual")}
+                  >
+                    Manual
+                  </button>
+                </div>
+                {ruleMode === "automatic" ? (
+                  <div className="rule-plan">
+                    {ruleSelectionError && (
+                      <small className="field-error">{ruleSelectionError}</small>
+                    )}
+                    {ruleSelectionPlan?.segments.map((segment) => {
+                      const itemId = `automatic:${segment.relativePath || "."}`;
+                      const isExpanded = expandedRuleItems.has(itemId);
+                      return (
+                        <article className="rule-segment" key={segment.relativePath || "."}>
+                          <button
+                            type="button"
+                            className="rule-item-toggle"
+                            aria-expanded={isExpanded}
+                            onClick={() => toggleRuleItem(itemId)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown size={16} />
+                            ) : (
+                              <ChevronRight size={16} />
+                            )}
+                            <strong>
+                              {segment.relativePath === ""
+                                ? "Repository root"
+                                : segment.relativePath}
+                            </strong>
+                            <span>{segment.rules.length} rules</span>
+                          </button>
+                          {isExpanded && (
+                            <>
+                              <ul className="rule-summary-list">
+                                {ruleRecords(segment.rules, rules).map((rule) => (
+                                  <li key={rule.id}>
+                                    <strong>{rule.name}</strong>
+                                    <span className="rule-metadata">
+                                      <span>{languageLabel(rule.language)}</span>
+                                      <span>
+                                        {rule.executionKind === "modelPlanned"
+                                          ? "model planned"
+                                          : "deterministic"}
+                                      </span>
+                                      <span>{formatToken(rule.safetyLevel)}</span>
+                                      <span>{formatToken(rule.allowedWrites)}</span>
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                              <ul className="reason-list">
+                                {segment.reasons.slice(0, 4).map((reason) => (
+                                  <li key={`${reason.ruleId}-${reason.source}-${reason.message}`}>
+                                    <span>{formatToken(reason.source)}</span>
+                                    {reason.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                        </article>
+                      );
+                    })}
+                    {ruleSelectionPlan && ruleSelectionPlan.segments.length === 0 && (
+                      <p className="empty">No automatic rules matched this target.</p>
+                    )}
+                    {!ruleSelectionPlan && !ruleSelectionError && (
+                      <p className="empty">Detecting rules for this target.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rule-list">
+                    {rules.map((rule) => {
+                      const itemId = `manual:${rule.id}`;
+                      const isExpanded = expandedRuleItems.has(itemId);
+                      return (
+                        <article className="manual-rule-item" key={rule.id}>
+                          <div className="manual-rule-header">
+                            <label className="manual-rule-check">
+                              <input
+                                type="checkbox"
+                                checked={selectedRules.includes(rule.id)}
+                                onChange={() => toggleRule(rule.id)}
+                              />
+                              <span className="rule-heading">
+                                <strong>{rule.name}</strong>
+                                <span className="language-badge">
+                                  {languageLabel(rule.language)}
+                                </span>
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              className="rule-item-toggle compact-toggle"
+                              aria-expanded={isExpanded}
+                              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${rule.name}`}
+                              onClick={() => toggleRuleItem(itemId)}
+                            >
+                              {isExpanded ? (
+                                <ChevronDown size={16} />
+                              ) : (
+                                <ChevronRight size={16} />
+                              )}
+                            </button>
+                          </div>
+                          {isExpanded && (
+                            <div className="manual-rule-detail">
+                              <span className="rule-metadata">
+                                <span>
+                                  {rule.executionKind === "modelPlanned"
+                                    ? "model planned"
+                                    : "deterministic"}
+                                </span>
+                                <span>{formatToken(rule.safetyLevel)}</span>
+                                <span>{formatToken(rule.allowedWrites)}</span>
+                              </span>
+                              <small>{rule.description}</small>
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="segmented" aria-label="Test file mode">
@@ -894,7 +1179,9 @@ function App() {
                   <dd>{pendingRunDraft.testFileMode}</dd>
                 </div>
               </dl>
-              {renderCandidateFilePreview(pendingRunDraft.candidateFilePreview)}
+              {renderCandidateFilePreview(pendingRunDraft.candidateFilePreview, {
+                interactive: false,
+              })}
               <div className="settings-grid">
                 <section>
                   <h4>{pendingRunDraft.mode === "automatic" ? "Rule selection plan" : "Rules"}</h4>
@@ -1258,6 +1545,169 @@ function latestDownloadProgress(events: RunEvent[]): { label: string; percent: n
     };
   }
   return null;
+}
+
+function repositoryFilePath(repositoryRootPath: string, relativePath: string): string {
+  const root = repositoryRootPath.replace(/[\\/]+$/, "");
+  return `${root}/${relativePath}`;
+}
+
+function pathsEndWithSameFile(absolutePath: string, relativePath: string): boolean {
+  const normalizedAbsolute = absolutePath.replaceAll("\\", "/");
+  const normalizedRelative = relativePath.replaceAll("\\", "/");
+  return (
+    normalizedAbsolute === normalizedRelative ||
+    normalizedAbsolute.endsWith(`/${normalizedRelative}`)
+  );
+}
+
+function changedLineNumbers(originalContent: string, newContent: string): number[] {
+  const originalLines = originalContent.split("\n");
+  const newLines = newContent.split("\n");
+  const commonSubsequence = longestCommonLineSubsequence(originalLines, newLines);
+  const unchangedOriginalLines = new Set(commonSubsequence.map(([originalIndex]) => originalIndex));
+  const changedLines: number[] = [];
+
+  for (let index = 0; index < originalLines.length; index += 1) {
+    if (!unchangedOriginalLines.has(index)) {
+      changedLines.push(index + 1);
+    }
+  }
+
+  if (changedLines.length === 0 && originalContent !== newContent) {
+    return [Math.max(1, originalLines.length)];
+  }
+
+  return changedLines;
+}
+
+function longestCommonLineSubsequence(
+  left: string[],
+  right: string[],
+): Array<[number, number]> {
+  const table = Array.from({ length: left.length + 1 }, () =>
+    Array<number>(right.length + 1).fill(0),
+  );
+
+  for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = right.length - 1; rightIndex >= 0; rightIndex -= 1) {
+      table[leftIndex][rightIndex] =
+        left[leftIndex] === right[rightIndex]
+          ? table[leftIndex + 1][rightIndex + 1] + 1
+          : Math.max(table[leftIndex + 1][rightIndex], table[leftIndex][rightIndex + 1]);
+    }
+  }
+
+  const pairs: Array<[number, number]> = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      pairs.push([leftIndex, rightIndex]);
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (table[leftIndex + 1][rightIndex] >= table[leftIndex][rightIndex + 1]) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  return pairs;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KiB`;
+}
+
+type ChangePreviewSummaryProps = {
+  edit: AnalyzerEdit | null;
+  loading: boolean;
+  error: string;
+  unavailable: boolean;
+};
+
+function ChangePreviewSummary({
+  edit,
+  loading,
+  error,
+  unavailable,
+}: ChangePreviewSummaryProps) {
+  if (loading) {
+    return <p className="change-preview-note">Checking deterministic edits.</p>;
+  }
+  if (error) {
+    return <p className="change-preview-error">{error}</p>;
+  }
+  if (unavailable) {
+    return <p className="change-preview-note">No deterministic edit preview available.</p>;
+  }
+  if (!edit) {
+    return <p className="change-preview-note">No deterministic edits found.</p>;
+  }
+
+  return (
+    <p className="change-preview-note strong">
+      Would change {changedLineNumbers(edit.originalContent, edit.newContent).length} lines:{" "}
+      {edit.summary}
+    </p>
+  );
+}
+
+type CodePreviewProps = {
+  content: string;
+  highlightedLines: number[];
+  language: RepositoryFilePreviewResponse["language"];
+  path: string;
+};
+
+function CodePreview({ content, highlightedLines, language, path }: CodePreviewProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const highlightedLineSet = new Set(highlightedLines);
+
+    const extensions: Extension[] = [
+      lineNumbers(),
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      EditorView.decorations.compute([], (state) => {
+        const lineDecoration = Decoration.line({ class: "cm-change-preview-line" });
+        const ranges = [...highlightedLineSet]
+          .filter((lineNumber) => lineNumber >= 1 && lineNumber <= state.doc.lines)
+          .map((lineNumber) => lineDecoration.range(state.doc.line(lineNumber).from));
+        return Decoration.set(ranges, true);
+      }),
+    ];
+
+    if (language === "typescript") {
+      extensions.push(
+        javascript({
+          typescript: true,
+          jsx: path.endsWith(".tsx") || path.endsWith(".jsx"),
+        }),
+      );
+    }
+    if (language === "rust") {
+      extensions.push(rust());
+    }
+
+    const view = new EditorView({
+      parent: containerRef.current,
+      state: EditorState.create({
+        doc: content,
+        extensions,
+      }),
+    });
+
+    return () => view.destroy();
+  }, [content, highlightedLines, language, path]);
+
+  return <div className="code-preview" ref={containerRef} />;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

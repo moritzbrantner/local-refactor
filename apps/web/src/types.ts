@@ -163,6 +163,27 @@ export type CandidateFilePreviewResponse = {
   groups: CandidateFilePreviewGroup[];
 };
 
+export type RepositoryFilePreviewResponse = {
+  repositoryId: string;
+  relativePath: string;
+  language: "typescript" | "rust" | "text";
+  content: string;
+  sizeBytes: number;
+};
+
+export type AnalyzerEdit = {
+  filePath: string;
+  originalContent: string;
+  newContent: string;
+  ruleId: string;
+  summary: string;
+};
+
+export type AnalyzerResponse = {
+  edits: AnalyzerEdit[];
+  diagnostics: string[];
+};
+
 export type ModelSummary = {
   name: string;
   label: string;

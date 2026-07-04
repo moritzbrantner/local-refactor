@@ -175,6 +175,39 @@ export class FixtureApi {
         );
       }
 
+      if (method === "POST" && path === "/api/analyze") {
+        const body = request.postDataJSON() as Record<string, unknown>;
+        const targetPath = String(body.targetPath ?? "");
+        const rules = new Set((body.rules as string[] | undefined) ?? []);
+        const repository =
+          this.repositories.find((item) => targetPath.startsWith(item.rootPath)) ??
+          defaultRepository();
+        const relativePath = targetPath
+          .slice(repository.rootPath.length)
+          .replace(/^[/\\]+/, "")
+          .replaceAll("\\", "/");
+        const originalContent = fixtureFileContent(relativePath);
+        const newContent =
+          originalContent && rules.has("simplify-conditional")
+            ? fixtureSimplifiedContent(relativePath)
+            : null;
+        return fulfillJson(route, {
+          edits:
+            originalContent && newContent && originalContent !== newContent
+              ? [
+                  {
+                    filePath: targetPath,
+                    originalContent,
+                    newContent,
+                    ruleId: "simplify-conditional",
+                    summary: "Replaced boolean conditional with direct return.",
+                  },
+                ]
+              : [],
+          diagnostics: [`Analyzed ${targetPath}`],
+        });
+      }
+
       if (method === "POST" && path === "/api/repositories/pick") {
         const repository = defaultRepository();
         if (!this.repositories.some((item) => item.id === repository.id)) {
@@ -194,6 +227,22 @@ export class FixtureApi {
             repository && relativePath === "."
               ? [{ name: "src", relativePath: "src" }]
               : [],
+        });
+      }
+
+      const filePreviewMatch = path.match(/^\/api\/repositories\/([^/]+)\/file-preview$/);
+      if (method === "GET" && filePreviewMatch) {
+        const repository = this.repositories.find((item) => item.id === filePreviewMatch[1]);
+        if (!repository) return route.fulfill({ status: 404 });
+        const relativePath = url.searchParams.get("path") ?? "";
+        const content = fixtureFileContent(relativePath);
+        if (content === null) return route.fulfill({ status: 404 });
+        return fulfillJson(route, {
+          repositoryId: repository.id,
+          relativePath,
+          language: relativePath.endsWith(".rs") ? "rust" : "typescript",
+          content,
+          sizeBytes: new TextEncoder().encode(content).length,
         });
       }
 
@@ -401,6 +450,58 @@ function defaultCandidateFilePreview(
       };
     }),
   };
+}
+
+function fixtureFileContent(relativePath: string): string | null {
+  if (relativePath.endsWith(".rs")) {
+    return [
+      "pub fn invoice_total(items: &[(u32, u32)]) -> u32 {",
+      "    items.iter().map(|(price, quantity)| price * quantity).sum()",
+      "}",
+      "",
+    ].join("\n");
+  }
+
+  const typeScriptFiles: Record<string, string> = {
+    "src/sample.ts": [
+      "export function isReady(value: boolean) {",
+      "  if (value) {",
+      "    return true;",
+      "  }",
+      "  return false;",
+      "}",
+      "",
+    ].join("\n"),
+    "src/other.ts": [
+      "export const otherValue: string = \"ready\";",
+      "",
+      "export function labelFor(value: string) {",
+      "  return value.trim();",
+      "}",
+      "",
+    ].join("\n"),
+    "src/sample.test.ts": [
+      "import { expect, test } from \"bun:test\";",
+      "import { isReady } from \"./sample\";",
+      "",
+      "test(\"isReady\", () => {",
+      "  expect(isReady(true)).toBe(true);",
+      "});",
+      "",
+    ].join("\n"),
+  };
+
+  return typeScriptFiles[relativePath] ?? null;
+}
+
+function fixtureSimplifiedContent(relativePath: string): string | null {
+  if (relativePath !== "src/sample.ts") return fixtureFileContent(relativePath);
+  return [
+    "export function isReady(value: boolean) {",
+    "  return value;",
+    "}",
+    "",
+  ].join("\n");
 }
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
