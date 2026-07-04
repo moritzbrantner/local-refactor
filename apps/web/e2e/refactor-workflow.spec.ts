@@ -65,7 +65,16 @@ test("user can configure and start a deterministic refactor run", async ({ page 
   expect(fixture.lastRunRequest).toMatchObject({
     repositoryId: "repo-1",
     targetRelativePath: ".",
-    rules: ["simplify-conditional"],
+    rules: [],
+    ruleSelectionPlan: {
+      targetRelativePath: ".",
+      segments: [
+        {
+          relativePath: "src",
+          rules: ["simplify-conditional"],
+        },
+      ],
+    },
     model: "qwen2.5-coder:7b",
     testFileMode: "readOnly",
     validationCommands: ["bun test", "bun run typecheck"],

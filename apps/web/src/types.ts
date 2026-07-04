@@ -64,6 +64,7 @@ export type RunRecord = {
   createdAt: string;
   updatedAt: string;
   rules: string[];
+  ruleSelectionPlan?: RuleSelectionPlan | null;
   model?: string;
   testFileMode: string;
   validationCommands: string[];
@@ -73,6 +74,33 @@ export type RunRecord = {
   repositoryId?: string;
   repositoryRootPath?: string;
   targetRelativePath?: string;
+};
+
+export type RuleSelectionReason = {
+  ruleId: string;
+  source: "config" | "content" | "fallback";
+  message: string;
+};
+
+export type RuleSelectionSegment = {
+  relativePath: string;
+  rules: string[];
+  reasons: RuleSelectionReason[];
+};
+
+export type RuleSelectionPlan = {
+  targetRelativePath: string;
+  segments: RuleSelectionSegment[];
+};
+
+export type RuleSelectionPlanResponse = {
+  plan: RuleSelectionPlan;
+  effectiveConfig: {
+    rules: string[];
+    protectedPaths: string[];
+    validationCommands: string[];
+    testFileMode: "readOnly" | "mutable";
+  };
 };
 
 export type RunEvent = {
@@ -139,4 +167,6 @@ export type RunDraft = {
   validationCommands: string[];
   protectedPaths: string[];
   usesModelPlannedRules: boolean;
+  mode: "automatic" | "manual";
+  ruleSelectionPlan?: RuleSelectionPlan;
 };

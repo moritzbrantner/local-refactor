@@ -16,6 +16,7 @@ type RunRecord = {
   createdAt: string;
   updatedAt: string;
   rules: string[];
+  ruleSelectionPlan?: RuleSelectionPlan | null;
   model: string;
   testFileMode: string;
   validationCommands: string[];
@@ -23,6 +24,19 @@ type RunRecord = {
   repositoryId: string;
   repositoryRootPath: string;
   targetRelativePath: string;
+};
+
+type RuleSelectionPlan = {
+  targetRelativePath: string;
+  segments: Array<{
+    relativePath: string;
+    rules: string[];
+    reasons: Array<{
+      ruleId: string;
+      source: "config" | "content" | "fallback";
+      message: string;
+    }>;
+  }>;
 };
 
 type FixtureApiOptions = {
@@ -93,6 +107,20 @@ export class FixtureApi {
         return fulfillJson(route, this.repositories);
       }
 
+      if (method === "POST" && path === "/api/rule-selection/plan") {
+        const body = request.postDataJSON() as Record<string, unknown>;
+        const targetRelativePath = String(body.targetRelativePath ?? ".");
+        return fulfillJson(route, {
+          plan: defaultRuleSelectionPlan(targetRelativePath),
+          effectiveConfig: {
+            rules: ["simplify-conditional"],
+            protectedPaths: ["src/generated/**"],
+            validationCommands: ["bun test"],
+            testFileMode: "readOnly",
+          },
+        });
+      }
+
       if (method === "POST" && path === "/api/repositories/pick") {
         const repository = defaultRepository();
         if (!this.repositories.some((item) => item.id === repository.id)) {
@@ -133,7 +161,10 @@ export class FixtureApi {
           id: "run-created",
           repository,
           targetRelativePath: String(body.targetRelativePath ?? "."),
-          rules: body.rules as string[],
+          rules: ((body.rules as string[] | undefined)?.length
+            ? body.rules
+            : ["simplify-conditional"]) as string[],
+          ruleSelectionPlan: body.ruleSelectionPlan as RuleSelectionPlan | undefined,
           model: String(body.model),
           testFileMode: String(body.testFileMode),
           validationCommands: body.validationCommands as string[],
@@ -238,6 +269,7 @@ export function succeededRun(options: {
   repository?: RepositoryRecord;
   targetRelativePath?: string;
   rules?: string[];
+  ruleSelectionPlan?: RuleSelectionPlan;
   model?: string;
   testFileMode?: string;
   validationCommands?: string[];
@@ -255,6 +287,7 @@ export function succeededRun(options: {
     createdAt: now,
     updatedAt: now,
     rules: options.rules ?? ["simplify-conditional"],
+    ruleSelectionPlan: options.ruleSelectionPlan ?? null,
     model: options.model ?? "qwen2.5-coder:7b",
     testFileMode: options.testFileMode ?? "readOnly",
     validationCommands: options.validationCommands ?? ["bun test"],
@@ -262,6 +295,25 @@ export function succeededRun(options: {
     repositoryId: repository.id,
     repositoryRootPath: repository.rootPath,
     targetRelativePath,
+  };
+}
+
+function defaultRuleSelectionPlan(targetRelativePath: string): RuleSelectionPlan {
+  return {
+    targetRelativePath,
+    segments: [
+      {
+        relativePath: targetRelativePath === "." ? "src" : targetRelativePath,
+        rules: ["simplify-conditional"],
+        reasons: [
+          {
+            ruleId: "simplify-conditional",
+            source: "fallback",
+            message: "TypeScript source files are present in this segment",
+          },
+        ],
+      },
+    ],
   };
 }
 

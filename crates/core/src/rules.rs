@@ -1,7 +1,7 @@
 use crate::config::TestFileMode;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Language {
     #[serde(rename = "typescript")]
     TypeScript,

@@ -28,6 +28,8 @@ import type {
   RepositoryPickResponse,
   RepositoryRecord,
   Rule,
+  RuleSelectionPlan,
+  RuleSelectionPlanResponse,
   RunDraft,
   RunEvent,
   RunRecord,
@@ -56,6 +58,9 @@ function App() {
   const [isPickingRepository, setIsPickingRepository] = useState(false);
   const [editedLabels, setEditedLabels] = useState<Record<string, string>>({});
   const [selectedRules, setSelectedRules] = useState<string[]>(["simplify-conditional"]);
+  const [ruleSelectionPlan, setRuleSelectionPlan] = useState<RuleSelectionPlan | null>(null);
+  const [ruleSelectionError, setRuleSelectionError] = useState("");
+  const [ruleMode, setRuleMode] = useState<"automatic" | "manual">("automatic");
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [testFileMode, setTestFileMode] = useState<"readOnly" | "mutable">("readOnly");
   const [validationCommands, setValidationCommands] = useState("");
@@ -153,9 +158,38 @@ function App() {
     setFolderChildren({});
     setExpandedFolders(new Set([ROOT_PATH]));
     setSelectedTargetRelativePath(ROOT_PATH);
+    setRuleSelectionPlan(null);
     if (!selectedRepositoryId) return;
     loadFolder(selectedRepositoryId, ROOT_PATH).catch((error) => setMessage(error.message));
   }, [selectedRepositoryId]);
+
+  useEffect(() => {
+    if (!selectedRepositoryId) {
+      setRuleSelectionPlan(null);
+      return;
+    }
+    let ignore = false;
+    setRuleSelectionError("");
+    api
+      .post<RuleSelectionPlanResponse>("/api/rule-selection/plan", {
+        repositoryId: selectedRepositoryId,
+        targetRelativePath: selectedTargetRelativePath,
+        testFileMode,
+        protectedPaths: lines(protectedPaths),
+      })
+      .then((response) => {
+        if (!ignore) setRuleSelectionPlan(response.plan);
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setRuleSelectionPlan(null);
+          setRuleSelectionError(error.message);
+        }
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [selectedRepositoryId, selectedTargetRelativePath, testFileMode, protectedPaths]);
 
   useEffect(() => {
     if (!selectedRun?.id) {
@@ -267,7 +301,9 @@ function App() {
     const response = await api.post<{ id: string }>("/api/runs", {
       repositoryId: pendingRunDraft.repositoryId,
       targetRelativePath: pendingRunDraft.targetRelativePath,
-      rules: pendingRunDraft.rules,
+      rules: pendingRunDraft.mode === "manual" ? pendingRunDraft.rules : [],
+      ruleSelectionPlan:
+        pendingRunDraft.mode === "automatic" ? pendingRunDraft.ruleSelectionPlan : undefined,
       model: pendingRunDraft.model,
       testFileMode: pendingRunDraft.testFileMode,
       validationCommands: pendingRunDraft.validationCommands,
@@ -296,9 +332,10 @@ function App() {
 
   function buildRunDraft(): RunDraft | null {
     if (!selectedRepositoryId || !selectedRepository) return null;
-    const selectedRuleRecords = selectedRules
-      .map((ruleId) => rules.find((rule) => rule.id === ruleId))
-      .filter((rule): rule is Rule => Boolean(rule));
+    const automaticRules =
+      ruleSelectionPlan && ruleMode === "automatic" ? flattenedPlanRules(ruleSelectionPlan) : [];
+    const draftRuleIds = ruleMode === "automatic" ? automaticRules : selectedRules;
+    const selectedRuleRecords = ruleRecords(draftRuleIds, rules);
     const model = models.find((candidate) => candidate.name === selectedModel);
     return {
       repositoryId: selectedRepositoryId,
@@ -306,11 +343,11 @@ function App() {
       targetRelativePath: selectedTargetRelativePath,
       targetLabel:
         selectedTargetRelativePath === ROOT_PATH ? "Repository root" : selectedTargetRelativePath,
-      rules: selectedRules,
+      rules: draftRuleIds,
       ruleLabels:
         selectedRuleRecords.length > 0
           ? selectedRuleRecords.map((rule) => rule.name)
-          : selectedRules,
+          : draftRuleIds,
       ruleSummaries: selectedRuleRecords,
       model: selectedModel,
       modelLabel: model?.label ?? selectedModel,
@@ -320,6 +357,8 @@ function App() {
       usesModelPlannedRules: selectedRuleRecords.some(
         (rule) => rule.executionKind === "modelPlanned",
       ),
+      mode: ruleMode,
+      ruleSelectionPlan: ruleMode === "automatic" ? ruleSelectionPlan ?? undefined : undefined,
     };
   }
 
@@ -530,29 +569,94 @@ function App() {
 
             <div className="field-group">
               <span>Rules</span>
-              <div className="rule-list">
-                {rules.map((rule) => (
-                  <label className="checkbox-row" key={rule.id}>
-                    <input
-                      type="checkbox"
-                      checked={selectedRules.includes(rule.id)}
-                      onChange={() => toggleRule(rule.id)}
-                    />
-                    <span>
-                      <span className="rule-heading">
-                        <strong>{rule.name}</strong>
-                        <span className="language-badge">{languageLabel(rule.language)}</span>
-                      </span>
-                      <span className="rule-metadata">
-                        <span>{rule.executionKind === "modelPlanned" ? "model planned" : "deterministic"}</span>
-                        <span>{formatToken(rule.safetyLevel)}</span>
-                        <span>{formatToken(rule.allowedWrites)}</span>
-                      </span>
-                      <small>{rule.description}</small>
-                    </span>
-                  </label>
-                ))}
+              <div className="segmented" aria-label="Rule selection mode">
+                <button
+                  type="button"
+                  className={ruleMode === "automatic" ? "active" : ""}
+                  onClick={() => setRuleMode("automatic")}
+                >
+                  Automatic
+                </button>
+                <button
+                  type="button"
+                  className={ruleMode === "manual" ? "active" : ""}
+                  onClick={() => setRuleMode("manual")}
+                >
+                  Manual
+                </button>
               </div>
+              {ruleMode === "automatic" ? (
+                <div className="rule-plan">
+                  {ruleSelectionError && (
+                    <small className="field-error">{ruleSelectionError}</small>
+                  )}
+                  {ruleSelectionPlan?.segments.map((segment) => (
+                    <article className="rule-segment" key={segment.relativePath || "."}>
+                      <div className="rule-segment-title">
+                        <strong>
+                          {segment.relativePath === "" ? "Repository root" : segment.relativePath}
+                        </strong>
+                        <span>{segment.rules.length} rules</span>
+                      </div>
+                      <ul className="rule-summary-list">
+                        {ruleRecords(segment.rules, rules).map((rule) => (
+                          <li key={rule.id}>
+                            <strong>{rule.name}</strong>
+                            <span className="rule-metadata">
+                              <span>{languageLabel(rule.language)}</span>
+                              <span>
+                                {rule.executionKind === "modelPlanned"
+                                  ? "model planned"
+                                  : "deterministic"}
+                              </span>
+                              <span>{formatToken(rule.safetyLevel)}</span>
+                              <span>{formatToken(rule.allowedWrites)}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <ul className="reason-list">
+                        {segment.reasons.slice(0, 4).map((reason) => (
+                          <li key={`${reason.ruleId}-${reason.source}-${reason.message}`}>
+                            <span>{formatToken(reason.source)}</span>
+                            {reason.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                  {ruleSelectionPlan && ruleSelectionPlan.segments.length === 0 && (
+                    <p className="empty">No automatic rules matched this target.</p>
+                  )}
+                  {!ruleSelectionPlan && !ruleSelectionError && (
+                    <p className="empty">Detecting rules for this target.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rule-list">
+                  {rules.map((rule) => (
+                    <label className="checkbox-row" key={rule.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRules.includes(rule.id)}
+                        onChange={() => toggleRule(rule.id)}
+                      />
+                      <span>
+                        <span className="rule-heading">
+                          <strong>{rule.name}</strong>
+                          <span className="language-badge">{languageLabel(rule.language)}</span>
+                        </span>
+                        <span className="rule-metadata">
+                          <span>{rule.executionKind === "modelPlanned" ? "model planned" : "deterministic"}</span>
+                          <span>{formatToken(rule.safetyLevel)}</span>
+                          <span>{formatToken(rule.allowedWrites)}</span>
+                        </span>
+                        <small>{rule.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="segmented" aria-label="Test file mode">
@@ -623,27 +727,50 @@ function App() {
               </dl>
               <div className="settings-grid">
                 <section>
-                  <h4>Rules</h4>
-                  <ul className="rule-summary-list">
-                    {pendingRunDraft.ruleSummaries.map((rule) => (
-                      <li key={rule.id}>
-                        <strong>{rule.name}</strong>
-                        <span className="rule-metadata">
-                          <span>{languageLabel(rule.language)}</span>
-                          <span>
-                            {rule.executionKind === "modelPlanned"
-                              ? "model planned"
-                              : "deterministic"}
+                  <h4>{pendingRunDraft.mode === "automatic" ? "Rule selection plan" : "Rules"}</h4>
+                  {pendingRunDraft.mode === "automatic" && pendingRunDraft.ruleSelectionPlan ? (
+                    <div className="rule-plan compact-plan">
+                      {pendingRunDraft.ruleSelectionPlan.segments.map((segment) => (
+                        <article className="rule-segment" key={segment.relativePath || "."}>
+                          <div className="rule-segment-title">
+                            <strong>
+                              {segment.relativePath === ""
+                                ? "Repository root"
+                                : segment.relativePath}
+                            </strong>
+                            <span>{segment.rules.length} rules</span>
+                          </div>
+                          <p>{segment.rules.map((ruleId) => ruleName(ruleId, rules)).join(", ")}</p>
+                          {ruleRecords(segment.rules, rules).map((rule) => (
+                            <span className="rule-preserves" key={rule.id}>
+                              Preserves {rule.preserves.map(formatToken).join(", ")}
+                            </span>
+                          ))}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="rule-summary-list">
+                      {pendingRunDraft.ruleSummaries.map((rule) => (
+                        <li key={rule.id}>
+                          <strong>{rule.name}</strong>
+                          <span className="rule-metadata">
+                            <span>{languageLabel(rule.language)}</span>
+                            <span>
+                              {rule.executionKind === "modelPlanned"
+                                ? "model planned"
+                                : "deterministic"}
+                            </span>
+                            <span>{formatToken(rule.safetyLevel)}</span>
+                            <span>{formatToken(rule.allowedWrites)}</span>
                           </span>
-                          <span>{formatToken(rule.safetyLevel)}</span>
-                          <span>{formatToken(rule.allowedWrites)}</span>
-                        </span>
-                        <span className="rule-preserves">
-                          Preserves {rule.preserves.map(formatToken).join(", ")}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                          <span className="rule-preserves">
+                            Preserves {rule.preserves.map(formatToken).join(", ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
                 <section>
                   <h4>Protected paths</h4>
@@ -792,6 +919,26 @@ function App() {
                   </dl>
 
                   <div className="settings-grid">
+                    {selectedRun.ruleSelectionPlan && (
+                      <section>
+                        <h4>Rule selection plan</h4>
+                        <div className="rule-plan compact-plan">
+                          {selectedRun.ruleSelectionPlan.segments.map((segment) => (
+                            <article className="rule-segment" key={segment.relativePath || "."}>
+                              <div className="rule-segment-title">
+                                <strong>
+                                  {segment.relativePath === ""
+                                    ? "Repository root"
+                                    : segment.relativePath}
+                                </strong>
+                                <span>{segment.rules.length} rules</span>
+                              </div>
+                              <p>{segment.rules.map((ruleId) => ruleName(ruleId, rules)).join(", ")}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                     <section>
                       <h4>Validation commands</h4>
                       {selectedRun.validationCommands.length > 0 ? (
@@ -882,6 +1029,20 @@ function lines(value: string): string[] {
 
 function languageLabel(language: Rule["language"]): string {
   return language === "rust" ? "Rust" : "TypeScript";
+}
+
+function flattenedPlanRules(plan: RuleSelectionPlan): string[] {
+  return [...new Set(plan.segments.flatMap((segment) => segment.rules))].sort();
+}
+
+function ruleRecords(ruleIds: string[], rules: Rule[]): Rule[] {
+  return ruleIds
+    .map((ruleId) => rules.find((rule) => rule.id === ruleId))
+    .filter((rule): rule is Rule => Boolean(rule));
+}
+
+function ruleName(ruleId: string, rules: Rule[]): string {
+  return rules.find((rule) => rule.id === ruleId)?.name ?? ruleId;
 }
 
 function formatToken(value: string): string {

@@ -21,6 +21,7 @@ use axum::{
 };
 use local_refactor_core::{
     config::{ConfigLayer, TestFileMode},
+    rule_selection::RuleSelectionPlan,
     rules::{rule_by_id, Language, RuleExecutionKind, INITIAL_RULES},
 };
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,8 @@ pub use patch_plan::{
 pub(crate) use run_intake::effective_config_for_paths;
 pub(crate) use run_intake::{
     effective_config_for, effective_rules, normalize_request, patch_plan_request,
-    prepare_source_request, request_target_path, selected_model, validation_root,
+    prepare_source_request, request_target_path, rule_selection_plan_for_request, selected_model,
+    validation_root,
 };
 
 pub type ModelProgressSink = Arc<dyn Fn(ModelDownloadProgress) + Send + Sync>;
@@ -133,6 +135,8 @@ pub struct RunCreateRequest {
     #[serde(default)]
     rules: Vec<String>,
     #[serde(default)]
+    rule_selection_plan: Option<RuleSelectionPlan>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     test_file_mode: Option<TestFileMode>,
@@ -194,6 +198,13 @@ struct HealthResponse {
 #[serde(rename_all = "camelCase")]
 struct RulesResponse<'a> {
     rules: &'a [local_refactor_core::rules::RuleDefinition],
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleSelectionPlanResponse {
+    plan: RuleSelectionPlan,
+    effective_config: local_refactor_core::EffectiveConfig,
 }
 
 #[derive(Debug, Serialize)]
@@ -276,6 +287,7 @@ pub fn router(state: ServiceState) -> Router {
         .route("/api/rules", get(rules))
         .route("/api/models", get(models))
         .route("/api/config/effective", get(effective_config))
+        .route("/api/rule-selection/plan", post(rule_selection_plan))
         .route(
             "/api/repositories",
             get(list_repositories).post(create_repository),
@@ -324,6 +336,24 @@ async fn models(State(state): State<ServiceState>) -> impl IntoResponse {
 async fn effective_config(Query(query): Query<EffectiveConfigQuery>) -> impl IntoResponse {
     match effective_config_for(Path::new(&query.target_path), ConfigLayer::default()) {
         Ok(config) => Json(config).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn rule_selection_plan(
+    State(state): State<ServiceState>,
+    Json(request): Json<RunCreateRequest>,
+) -> impl IntoResponse {
+    match rule_selection_plan_for_request(&state.db, request) {
+        Ok((plan, effective_config)) => Json(RuleSelectionPlanResponse {
+            plan,
+            effective_config,
+        })
+        .into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -1173,6 +1203,7 @@ mod tests {
             repository_root_path: Some(repo.path().to_string_lossy().to_string()),
             target_relative_path: Some("src".to_string()),
             rules: vec!["simplify-conditional".to_string()],
+            rule_selection_plan: None,
             model: None,
             test_file_mode: Some(TestFileMode::ReadOnly),
             validation_commands: Vec::new(),
@@ -1206,6 +1237,7 @@ mod tests {
                 repository_root_path: None,
                 target_relative_path: Some("src".to_string()),
                 rules: Vec::new(),
+                rule_selection_plan: None,
                 model: None,
                 test_file_mode: None,
                 validation_commands: Vec::new(),
@@ -1305,6 +1337,7 @@ validationCommands = ["echo default validation"]
                 repository_root_path: None,
                 target_relative_path: None,
                 rules: Vec::new(),
+                rule_selection_plan: None,
                 model: Some("unknown-model:latest".to_string()),
                 test_file_mode: None,
                 validation_commands: Vec::new(),

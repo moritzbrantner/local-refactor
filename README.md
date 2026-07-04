@@ -87,6 +87,19 @@ service validates that plan before writing.
 
 ## Configuration
 
+Runs can use automatic rule selection. When the web UI target changes, the
+service builds a `Rule Selection Plan` from the selected folder, its subfolders,
+and parent-folder context. The plan is segmented by semantic folder boundaries
+such as package, crate, source, and `refactor-rules.toml` folders. Each segment
+stores selected rule IDs and short reasons. Users can accept the automatic plan
+or switch to manual global rule selection before starting a run.
+
+Automatic selection is conservative. TypeScript folders fall back to
+`simplify-conditional` and `normalize-imports`; Rust folders do not get a
+fallback rule unless config supplies one. Documentation rules and multi-file
+model-planned rules are never guessed from file contents; they must come from
+config or manual selection.
+
 Global config:
 
 ```toml
@@ -108,6 +121,21 @@ testFileMode = "readOnly"
 ```
 
 Run settings from the web UI override global and project settings.
+
+Preview the automatic plan:
+
+```http
+POST /api/rule-selection/plan
+```
+
+```json
+{
+  "repositoryId": "saved-repository-id",
+  "targetRelativePath": "src",
+  "testFileMode": "readOnly",
+  "protectedPaths": ["src/generated/**"]
+}
+```
 
 ## Check
 

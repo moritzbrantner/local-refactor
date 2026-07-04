@@ -167,7 +167,8 @@ select {
 
 .repository-list,
 .run-list,
-.rule-list {
+.rule-list,
+.rule-plan {
   display: grid;
   gap: 8px;
 }
@@ -366,6 +367,71 @@ select {
 .rule-summary-list li {
   display: grid;
   gap: 4px;
+}
+
+.rule-segment {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #dde4ea;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.rule-segment-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rule-segment-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rule-segment-title span {
+  flex: 0 0 auto;
+  color: #697583;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rule-segment p {
+  margin: 0;
+  color: #4b5c6a;
+  font-size: 12px;
+}
+
+.reason-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  color: #536170;
+  font-size: 12px;
+}
+
+.reason-list li {
+  display: grid;
+  gap: 3px;
+}
+
+.reason-list span {
+  width: max-content;
+  border: 1px solid #d5dee6;
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: #24543a;
+  background: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-plan {
+  gap: 6px;
 }
 
 .rule-preserves {

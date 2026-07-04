@@ -760,6 +760,177 @@ async fn repository_source_run_resolves_target_folder_and_records_context() {
 }
 
 #[tokio::test]
+async fn rule_selection_plan_endpoint_returns_segment_recommendations() {
+    let harness = Harness::new_git_repo();
+    let package = harness.repo.path().join("packages/web");
+    let sample = package.join("src/report.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(package.join("package.json"), "{}").unwrap();
+    std::fs::write(&sample, report_source()).unwrap();
+
+    let repository = harness
+        .post_json(
+            "/api/repositories",
+            json!({ "path": harness.repo.path().to_string_lossy() }),
+        )
+        .await;
+    let repository_id = repository.json["id"].as_str().unwrap();
+
+    let response = harness
+        .post_json(
+            "/api/rule-selection/plan",
+            json!({
+                "repositoryId": repository_id,
+                "targetRelativePath": ".",
+                "testFileMode": "readOnly"
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let segments = response.json["plan"]["segments"].as_array().unwrap();
+    assert_eq!(segments.len(), 1);
+    assert_eq!(segments[0]["relativePath"], "packages/web");
+    let rules = segments[0]["rules"].as_array().unwrap();
+    assert!(rules.iter().any(|rule| rule == "simplify-conditional"));
+    assert!(rules.iter().any(|rule| rule == "normalize-imports"));
+    assert!(rules.iter().any(|rule| rule == "extract-type-definition"));
+    assert!(segments[0]["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| {
+            reason["ruleId"] == "extract-type-definition" && reason["source"] == "content"
+        }));
+}
+
+#[tokio::test]
+async fn automatic_segmented_run_executes_each_segment_and_persists_plan() {
+    let harness = Harness::new_git_repo();
+    let first = harness.repo.path().join("packages/a/src/sample.ts");
+    let second = harness.repo.path().join("packages/b/src/sample.ts");
+    std::fs::create_dir_all(first.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(second.parent().unwrap()).unwrap();
+    std::fs::write(harness.repo.path().join("packages/a/package.json"), "{}").unwrap();
+    std::fs::write(harness.repo.path().join("packages/b/package.json"), "{}").unwrap();
+    std::fs::write(&first, conditional_source()).unwrap();
+    std::fs::write(&second, conditional_source()).unwrap();
+
+    let repository = harness
+        .post_json(
+            "/api/repositories",
+            json!({ "path": harness.repo.path().to_string_lossy() }),
+        )
+        .await;
+    let repository_id = repository.json["id"].as_str().unwrap();
+    let plan_response = harness
+        .post_json(
+            "/api/rule-selection/plan",
+            json!({
+                "repositoryId": repository_id,
+                "targetRelativePath": "."
+            }),
+        )
+        .await;
+    assert_eq!(plan_response.status, StatusCode::OK);
+    assert_eq!(
+        plan_response.json["plan"]["segments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "repositoryId": repository_id,
+                "targetRelativePath": ".",
+                "ruleSelectionPlan": plan_response.json["plan"],
+                "rules": [],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": [
+                    "grep -q 'return value;' packages/a/src/sample.ts",
+                    "grep -q 'return value;' packages/b/src/sample.ts"
+                ]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap();
+    let run = harness.poll_run(run_id, "succeeded").await;
+
+    assert!(std::fs::read_to_string(&first)
+        .unwrap()
+        .contains("return value;"));
+    assert!(std::fs::read_to_string(&second)
+        .unwrap()
+        .contains("return value;"));
+    assert_eq!(
+        run["ruleSelectionPlan"]["segments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(run["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|rule| rule == "simplify-conditional"));
+
+    let event_messages = harness.event_messages(run_id);
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Running automatic rule segment packages/a")));
+    assert!(event_messages
+        .iter()
+        .any(|message| message.contains("Running automatic rule segment packages/b")));
+}
+
+#[tokio::test]
+async fn manual_rules_override_supplied_rule_selection_plan() {
+    let harness = Harness::new_git_repo();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, duplicate_import_source()).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["normalize-imports"],
+                "ruleSelectionPlan": {
+                    "targetRelativePath": "",
+                    "segments": [{
+                        "relativePath": "",
+                        "rules": ["simplify-conditional"],
+                        "reasons": [{
+                            "ruleId": "simplify-conditional",
+                            "source": "fallback",
+                            "message": "ignored"
+                        }]
+                    }]
+                },
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["grep -q 'import { alpha, beta }' src/sample.ts"]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap();
+    let run = harness.poll_run(run_id, "succeeded").await;
+
+    assert!(run["ruleSelectionPlan"].is_null());
+    assert_eq!(run["rules"], json!(["normalize-imports"]));
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("import { alpha, beta }"));
+}
+
+#[tokio::test]
 async fn run_reverts_patch_when_validation_fails() {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.ts");

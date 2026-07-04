@@ -1,6 +1,7 @@
 use crate::RunCreateRequest;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use local_refactor_core::rule_selection::RuleSelectionPlan;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -32,6 +33,7 @@ pub struct RunRecord {
     pub created_at: String,
     pub updated_at: String,
     pub rules: Vec<String>,
+    pub rule_selection_plan: Option<RuleSelectionPlan>,
     pub model: Option<String>,
     pub test_file_mode: String,
     pub validation_commands: Vec<String>,
@@ -156,6 +158,7 @@ impl Database {
         ensure_column(&conn, "runs", "target_relative_path", "TEXT")?;
         ensure_column(&conn, "runs", "model", "TEXT")?;
         ensure_column(&conn, "runs", "metrics_json", "TEXT")?;
+        ensure_column(&conn, "runs", "rule_selection_plan_json", "TEXT")?;
         ensure_column(&conn, "patches", "action", "TEXT NOT NULL DEFAULT 'update'")?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -262,8 +265,8 @@ impl Database {
             INSERT INTO runs (
                 id, target_path, status, created_at, updated_at, rules_json,
                 test_file_mode, validation_json, protected_json, repository_id,
-                repository_root_path, target_relative_path, model
-            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                repository_root_path, target_relative_path, model, rule_selection_plan_json
+            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
             params![
                 id,
@@ -277,6 +280,11 @@ impl Database {
                 request.repository_root_path,
                 request.target_relative_path,
                 request.model,
+                request
+                    .rule_selection_plan
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
             ],
         )?;
         drop(conn);
@@ -340,7 +348,8 @@ impl Database {
                 r#"
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
-                       repository_id, repository_root_path, target_relative_path, model
+                       repository_id, repository_root_path, target_relative_path, model,
+                       rule_selection_plan_json
                 FROM runs
                 WHERE repository_id = ?1
                 ORDER BY created_at DESC
@@ -357,7 +366,8 @@ impl Database {
             r#"
             SELECT id, target_path, status, created_at, updated_at, rules_json,
                    test_file_mode, validation_json, protected_json, validation_output, error,
-                   repository_id, repository_root_path, target_relative_path, model
+                   repository_id, repository_root_path, target_relative_path, model,
+                   rule_selection_plan_json
             FROM runs
             ORDER BY created_at DESC
             LIMIT 100
@@ -374,7 +384,8 @@ impl Database {
                 r#"
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
-                       repository_id, repository_root_path, target_relative_path, model
+                       repository_id, repository_root_path, target_relative_path, model,
+                       rule_selection_plan_json
                 FROM runs
                 WHERE id = ?1
                 "#,
@@ -505,6 +516,7 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     let test_file_mode_json: String = row.get(6)?;
     let validation_json: String = row.get(7)?;
     let protected_json: String = row.get(8)?;
+    let rule_selection_plan_json: Option<String> = row.get(15)?;
 
     Ok(RunRecord {
         id: row.get(0)?,
@@ -513,6 +525,8 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
         rules: serde_json::from_str(&rules_json).unwrap_or_default(),
+        rule_selection_plan: rule_selection_plan_json
+            .and_then(|json| serde_json::from_str(&json).ok()),
         model: row.get(14)?,
         test_file_mode: serde_json::from_str::<String>(&test_file_mode_json)
             .unwrap_or(test_file_mode_json),

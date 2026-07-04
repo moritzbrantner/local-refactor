@@ -11,7 +11,7 @@ use local_refactor_core::{
     path_policy::PathPolicy,
     rules::{rule_by_id, Language, RuleDefinition, RuleExecutionKind},
 };
-use std::{error::Error, fmt, sync::Arc, time::Instant};
+use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
 
 #[derive(Debug)]
 struct RunCancelled;
@@ -120,17 +120,61 @@ async fn run_job_inner(
         check_cancelled(cancellation)?;
     }
 
-    for rule in &rules {
-        execute_rule(
-            state,
-            id,
-            request,
-            cancellation,
-            metrics,
-            model.as_deref(),
-            rule,
-        )
-        .await?;
+    if let Some(plan) = request.rule_selection_plan.as_ref() {
+        let repository_root = request
+            .repository_root_path
+            .as_deref()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!("rule selection plan requires repository root path"))?;
+        for segment in &plan.segments {
+            let segment_path = if segment.relative_path.is_empty() {
+                repository_root.clone()
+            } else {
+                repository_root.join(&segment.relative_path)
+            };
+            append_run_event(
+                state,
+                id,
+                &format!(
+                    "Running automatic rule segment {}",
+                    if segment.relative_path.is_empty() {
+                        "."
+                    } else {
+                        segment.relative_path.as_str()
+                    }
+                ),
+            )?;
+            let mut segment_request = request.clone();
+            segment_request.target_path = Some(segment_path.to_string_lossy().to_string());
+            segment_request.rules = segment.rules.clone();
+            for rule_id in &segment.rules {
+                let rule = rule_by_id(rule_id)
+                    .ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+                execute_rule(
+                    state,
+                    id,
+                    &segment_request,
+                    cancellation,
+                    metrics,
+                    model.as_deref(),
+                    rule,
+                )
+                .await?;
+            }
+        }
+    } else {
+        for rule in &rules {
+            execute_rule(
+                state,
+                id,
+                request,
+                cancellation,
+                metrics,
+                model.as_deref(),
+                rule,
+            )
+            .await?;
+        }
     }
 
     let validation_result = run_validation(state, id, request, metrics).await?;

@@ -24,6 +24,18 @@ _Avoid_: Refactor type, prompt flavor
 One of global, project, or run configuration. Layers merge as global, then project, then run.
 _Avoid_: Settings bucket
 
+**Rule Selection Plan**:
+A computed, run-ready mapping from Target Folder subtrees to selected Refactoring Rules and selection reasons.
+_Avoid_: Ruleset, guess result
+
+**Rule Selection Segment**:
+One non-overlapping folder subtree inside a Rule Selection Plan, with the Refactoring Rules that apply to that subtree.
+_Avoid_: Child run, mini job
+
+**Selection Evidence**:
+A recorded reason explaining why a Refactoring Rule was selected, such as config inheritance, source-file shape, language fallback, or folder markers.
+_Avoid_: Heuristic log
+
 **Run**:
 One autonomous refactoring attempt over an explicit target scope, selected rules, model settings, and validation policy.
 _Avoid_: Job, task

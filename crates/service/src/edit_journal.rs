@@ -178,6 +178,7 @@ mod tests {
             repository_root_path: None,
             target_relative_path: None,
             rules: vec!["simplify-conditional".to_string()],
+            rule_selection_plan: None,
             model: Some("qwen2.5-coder:7b".to_string()),
             test_file_mode: Some(TestFileMode::Mutable),
             validation_commands: vec!["true".to_string()],

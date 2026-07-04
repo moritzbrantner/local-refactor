@@ -9,6 +9,7 @@ use local_refactor_core::{
         EffectiveConfig,
     },
     path_policy::PathPolicy,
+    rule_selection::{select_rules, RuleSelectionInput, RuleSelectionPlan},
     rules::{planning_context_for, Language, RuleDefinition, StackContext},
 };
 use std::{
@@ -20,12 +21,13 @@ pub(crate) fn normalize_request(
     db: &Database,
     mut request: RunCreateRequest,
 ) -> Result<RunCreateRequest> {
+    let has_explicit_rules = !request.rules.is_empty();
     resolve_request_target(db, &mut request)?;
     let run_layer = ConfigLayer {
-        rules: if request.rules.is_empty() {
-            None
-        } else {
+        rules: if has_explicit_rules {
             Some(request.rules.clone())
+        } else {
+            None
         },
         protected_paths: if request.protected_paths.is_empty() {
             None
@@ -40,12 +42,27 @@ pub(crate) fn normalize_request(
         test_file_mode: request.test_file_mode,
     };
 
-    let target_path = request_target_path(&request)?;
-    let config = effective_config_for(Path::new(target_path), run_layer)?;
-    request.rules = config.rules;
+    let target_path = request_target_path(&request)?.to_string();
+    let config = effective_config_for(Path::new(&target_path), run_layer)?;
     request.protected_paths = config.protected_paths;
     request.validation_commands = config.validation_commands;
     request.test_file_mode = Some(config.test_file_mode);
+    if has_explicit_rules {
+        request.rules = config.rules;
+        request.rule_selection_plan = None;
+    } else {
+        let repository_root = repository_root_for_request(&request)?;
+        request.repository_root_path = Some(repository_root.to_string_lossy().to_string());
+        if request.rule_selection_plan.is_none() {
+            request.rule_selection_plan = Some(select_rules(RuleSelectionInput {
+                repository_root: Some(repository_root),
+                target_path: PathBuf::from(&target_path),
+                protected_paths: request.protected_paths.clone(),
+                test_file_mode: request.test_file_mode.unwrap_or_default(),
+            })?);
+        }
+        request.rules = flattened_plan_rules(request.rule_selection_plan.as_ref());
+    }
     request.model = Some(selected_model(&request)?);
     Ok(request)
 }
@@ -62,6 +79,49 @@ pub(crate) fn effective_rules(request: &RunCreateRequest) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+pub(crate) fn rule_selection_plan_for_request(
+    db: &Database,
+    mut request: RunCreateRequest,
+) -> Result<(RuleSelectionPlan, EffectiveConfig)> {
+    resolve_request_target(db, &mut request)?;
+    let run_layer = ConfigLayer {
+        rules: None,
+        protected_paths: if request.protected_paths.is_empty() {
+            None
+        } else {
+            Some(request.protected_paths.clone())
+        },
+        validation_commands: if request.validation_commands.is_empty() {
+            None
+        } else {
+            Some(request.validation_commands.clone())
+        },
+        test_file_mode: request.test_file_mode,
+    };
+    let target_path = request_target_path(&request)?;
+    let config = effective_config_for(Path::new(target_path), run_layer)?;
+    let repository_root = repository_root_for_request(&request)?;
+    let plan = select_rules(RuleSelectionInput {
+        repository_root: Some(repository_root),
+        target_path: PathBuf::from(target_path),
+        protected_paths: config.protected_paths.clone(),
+        test_file_mode: config.test_file_mode,
+    })?;
+    Ok((plan, config))
+}
+
+pub(crate) fn flattened_plan_rules(plan: Option<&RuleSelectionPlan>) -> Vec<String> {
+    plan.map(|plan| {
+        plan.segments
+            .iter()
+            .flat_map(|segment| segment.rules.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 pub(crate) fn selected_model(request: &RunCreateRequest) -> Result<String> {
@@ -253,6 +313,44 @@ fn resolve_request_target(db: &Database, request: &mut RunCreateRequest) -> Resu
         .ok_or_else(|| anyhow!("targetPath is required"))?;
     request.target_path = Some(target_path.to_string());
     Ok(())
+}
+
+fn repository_root_for_request(request: &RunCreateRequest) -> Result<PathBuf> {
+    if let Some(root) = request.repository_root_path.as_deref() {
+        return std::fs::canonicalize(root)
+            .with_context(|| format!("repository path is unavailable: {root}"));
+    }
+    let target_path = request_target_path(request)?;
+    let target_path = std::fs::canonicalize(target_path)
+        .with_context(|| format!("target path does not exist: {target_path}"))?;
+    let target_dir = if target_path.is_file() {
+        target_path
+            .parent()
+            .ok_or_else(|| anyhow!("target file has no parent directory"))?
+            .to_path_buf()
+    } else {
+        target_path
+    };
+    Ok(infer_context_root(&target_dir))
+}
+
+fn infer_context_root(target_dir: &Path) -> PathBuf {
+    let mut current = target_dir;
+    loop {
+        if current.join(".git").exists()
+            || current.join("Cargo.toml").exists()
+            || current.join("package.json").exists()
+        {
+            return current.to_path_buf();
+        }
+        let Some(parent) = current.parent() else {
+            return target_dir.to_path_buf();
+        };
+        if parent == current {
+            return target_dir.to_path_buf();
+        }
+        current = parent;
+    }
 }
 
 fn global_config_path() -> Option<PathBuf> {
