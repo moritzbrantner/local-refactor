@@ -21,6 +21,7 @@ import {
 import { API_BASE_URL, api } from "./api";
 import "./styles.css";
 import type {
+  CandidateFilePreviewResponse,
   FolderChildrenResponse,
   FolderEntry,
   ModelsResponse,
@@ -61,6 +62,10 @@ function App() {
   const [ruleSelectionPlan, setRuleSelectionPlan] = useState<RuleSelectionPlan | null>(null);
   const [ruleSelectionError, setRuleSelectionError] = useState("");
   const [ruleMode, setRuleMode] = useState<"automatic" | "manual">("automatic");
+  const [candidateFilePreview, setCandidateFilePreview] =
+    useState<CandidateFilePreviewResponse | null>(null);
+  const [candidateFilePreviewError, setCandidateFilePreviewError] = useState("");
+  const [candidateFilePreviewLoading, setCandidateFilePreviewLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [testFileMode, setTestFileMode] = useState<"readOnly" | "mutable">("readOnly");
   const [validationCommands, setValidationCommands] = useState("");
@@ -93,6 +98,16 @@ function App() {
     () => latestDownloadProgress(selectedRunEvents),
     [selectedRunEvents],
   );
+
+  const ruleSelectionLoading =
+    ruleMode === "automatic" && !ruleSelectionPlan && !ruleSelectionError;
+  const startRunDisabled =
+    !selectedRepositoryId ||
+    ruleSelectionLoading ||
+    (ruleMode === "automatic" && Boolean(ruleSelectionError)) ||
+    candidateFilePreviewLoading ||
+    Boolean(candidateFilePreviewError) ||
+    !candidateFilePreview;
 
   async function refresh(
     repositoryId = selectedRepositoryId,
@@ -169,6 +184,7 @@ function App() {
       return;
     }
     let ignore = false;
+    setRuleSelectionPlan(null);
     setRuleSelectionError("");
     api
       .post<RuleSelectionPlanResponse>("/api/rule-selection/plan", {
@@ -190,6 +206,95 @@ function App() {
       ignore = true;
     };
   }, [selectedRepositoryId, selectedTargetRelativePath, testFileMode, protectedPaths]);
+
+  useEffect(() => {
+    setPendingRunDraft(null);
+  }, [
+    selectedRepositoryId,
+    selectedTargetRelativePath,
+    ruleMode,
+    selectedRules,
+    ruleSelectionPlan,
+    testFileMode,
+    protectedPaths,
+    selectedModel,
+  ]);
+
+  useEffect(() => {
+    if (!selectedRepositoryId) {
+      setCandidateFilePreview(null);
+      setCandidateFilePreviewError("");
+      setCandidateFilePreviewLoading(false);
+      return;
+    }
+    if (ruleMode === "manual" && selectedRules.length === 0) {
+      setCandidateFilePreview(null);
+      setCandidateFilePreviewError("Select at least one rule to preview candidate files.");
+      setCandidateFilePreviewLoading(false);
+      return;
+    }
+    if (ruleMode === "automatic") {
+      if (ruleSelectionError) {
+        setCandidateFilePreview(null);
+        setCandidateFilePreviewError(ruleSelectionError);
+        setCandidateFilePreviewLoading(false);
+        return;
+      }
+      if (!ruleSelectionPlan || ruleSelectionPlan.targetRelativePath !== selectedTargetRelativePath) {
+        setCandidateFilePreview(null);
+        setCandidateFilePreviewError("");
+        setCandidateFilePreviewLoading(true);
+        return;
+      }
+    }
+
+    let ignore = false;
+    setCandidateFilePreviewLoading(true);
+    setCandidateFilePreviewError("");
+    const timer = window.setTimeout(() => {
+      api
+        .post<CandidateFilePreviewResponse>("/api/runs/candidate-file-preview", {
+          repositoryId: selectedRepositoryId,
+          targetRelativePath: selectedTargetRelativePath,
+          rules: ruleMode === "manual" ? selectedRules : [],
+          ruleSelectionPlan: ruleMode === "automatic" ? ruleSelectionPlan : undefined,
+          model: selectedModel,
+          testFileMode,
+          protectedPaths: lines(protectedPaths),
+          limitPerGroup: 50,
+        })
+        .then((preview) => {
+          if (!ignore) {
+            setCandidateFilePreview(preview);
+            setCandidateFilePreviewError("");
+          }
+        })
+        .catch((error) => {
+          if (!ignore) {
+            setCandidateFilePreview(null);
+            setCandidateFilePreviewError(error.message);
+          }
+        })
+        .finally(() => {
+          if (!ignore) setCandidateFilePreviewLoading(false);
+        });
+    }, 300);
+
+    return () => {
+      ignore = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    selectedRepositoryId,
+    selectedTargetRelativePath,
+    ruleMode,
+    selectedRules,
+    ruleSelectionPlan,
+    ruleSelectionError,
+    testFileMode,
+    protectedPaths,
+    selectedModel,
+  ]);
 
   useEffect(() => {
     if (!selectedRun?.id) {
@@ -332,6 +437,7 @@ function App() {
 
   function buildRunDraft(): RunDraft | null {
     if (!selectedRepositoryId || !selectedRepository) return null;
+    if (!candidateFilePreview || candidateFilePreviewLoading || candidateFilePreviewError) return null;
     const automaticRules =
       ruleSelectionPlan && ruleMode === "automatic" ? flattenedPlanRules(ruleSelectionPlan) : [];
     const draftRuleIds = ruleMode === "automatic" ? automaticRules : selectedRules;
@@ -359,6 +465,7 @@ function App() {
       ),
       mode: ruleMode,
       ruleSelectionPlan: ruleMode === "automatic" ? ruleSelectionPlan ?? undefined : undefined,
+      candidateFilePreview,
     };
   }
 
@@ -395,6 +502,53 @@ function App() {
           </div>
         )}
       </div>
+    );
+  }
+
+  function renderCandidateFilePreview(preview: CandidateFilePreviewResponse) {
+    return (
+      <section className="candidate-preview">
+        <div className="candidate-preview-title">
+          <h4>Candidate files</h4>
+          <span>{preview.totalCandidateFiles} total</span>
+        </div>
+        <div className="candidate-groups">
+          {preview.groups.map((group) => (
+            <article className="candidate-group" key={group.id}>
+              <div className="candidate-group-title">
+                <strong>{group.label}</strong>
+                <span>{group.totalFiles} files</span>
+              </div>
+              <div className="rule-metadata">
+                <span>{languageLabel(group.language)}</span>
+                <span>{group.ruleName}</span>
+                {group.segmentRelativePath !== undefined && (
+                  <span>
+                    {group.segmentRelativePath === ""
+                      ? "Repository root"
+                      : group.segmentRelativePath}
+                  </span>
+                )}
+              </div>
+              {group.files.length > 0 ? (
+                <ul className="candidate-file-list">
+                  {group.files.map((file) => (
+                    <li key={file.relativePath}>{file.relativePath}</li>
+                  ))}
+                  {group.hiddenFiles > 0 && (
+                    <li className="candidate-hidden">{group.hiddenFiles} more hidden</li>
+                  )}
+                </ul>
+              ) : (
+                <p className="empty">No mutable source files matched this group.</p>
+              )}
+            </article>
+          ))}
+          {preview.groups.length === 0 && (
+            <p className="empty">No candidate files matched this run configuration.</p>
+          )}
+        </div>
+      </section>
     );
   }
 
@@ -695,7 +849,22 @@ function App() {
               />
             </label>
 
-            <button className="primary" type="submit" disabled={!selectedRepositoryId}>
+            <section className="candidate-preview-shell">
+              {candidateFilePreviewLoading && (
+                <p className="empty">Previewing candidate files.</p>
+              )}
+              {candidateFilePreviewError && (
+                <small className="field-error">{candidateFilePreviewError}</small>
+              )}
+              {candidateFilePreview && renderCandidateFilePreview(candidateFilePreview)}
+              {!candidateFilePreviewLoading &&
+                !candidateFilePreviewError &&
+                !candidateFilePreview && (
+                  <p className="empty">Candidate files appear after selecting a repository.</p>
+                )}
+            </section>
+
+            <button className="primary" type="submit" disabled={startRunDisabled}>
               <Play size={18} />
               Start run
             </button>
@@ -725,6 +894,7 @@ function App() {
                   <dd>{pendingRunDraft.testFileMode}</dd>
                 </div>
               </dl>
+              {renderCandidateFilePreview(pendingRunDraft.candidateFilePreview)}
               <div className="settings-grid">
                 <section>
                   <h4>{pendingRunDraft.mode === "automatic" ? "Rule selection plan" : "Rules"}</h4>

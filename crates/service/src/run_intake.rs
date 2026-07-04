@@ -10,12 +10,46 @@ use local_refactor_core::{
     },
     path_policy::{is_source_for_language, PathDecision, PathPolicy},
     rule_selection::{select_rules, RuleSelectionInput, RuleSelectionPlan},
-    rules::{planning_context_for, Language, RuleDefinition, StackContext},
+    rules::{planning_context_for, rule_by_id, Language, RuleDefinition, StackContext},
 };
+use serde::Serialize;
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
 };
+
+const DEFAULT_CANDIDATE_FILE_LIMIT_PER_GROUP: usize = 50;
+const MAX_CANDIDATE_FILE_LIMIT_PER_GROUP: usize = 200;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CandidateFilePreviewResponse {
+    pub target_relative_path: String,
+    pub total_candidate_files: usize,
+    pub limit_per_group: usize,
+    pub groups: Vec<CandidateFilePreviewGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CandidateFilePreviewGroup {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_relative_path: Option<String>,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub language: Language,
+    pub total_files: usize,
+    pub hidden_files: usize,
+    pub files: Vec<CandidateFilePreviewFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CandidateFilePreviewFile {
+    pub relative_path: String,
+}
 
 pub(crate) fn normalize_request(
     db: &Database,
@@ -112,6 +146,53 @@ pub(crate) fn rule_selection_plan_for_request(
     Ok((plan, config))
 }
 
+pub(crate) fn candidate_file_preview_for_request(
+    db: &Database,
+    request: RunCreateRequest,
+    limit_per_group: Option<usize>,
+) -> Result<CandidateFilePreviewResponse> {
+    let is_manual = !request.rules.is_empty();
+    let request = normalize_request(db, request)?;
+    let limit_per_group = clamp_candidate_file_limit(limit_per_group);
+    let repository_root =
+        if request.repository_id.is_some() || request.repository_root_path.is_some() {
+            repository_root_for_request(&request).ok()
+        } else {
+            None
+        };
+    let target_path = PathBuf::from(request_target_path(&request)?);
+    let target_root = candidate_target_root(&target_path)?;
+    let display_root = repository_root.as_deref().unwrap_or(&target_root);
+    let target_relative_path = request
+        .target_relative_path
+        .clone()
+        .unwrap_or_else(|| relative_path(display_root, &target_root));
+
+    let mut all_candidate_files = BTreeSet::new();
+    let groups = if is_manual {
+        manual_candidate_file_groups(
+            &request,
+            display_root,
+            limit_per_group,
+            &mut all_candidate_files,
+        )?
+    } else {
+        automatic_candidate_file_groups(
+            &request,
+            display_root,
+            limit_per_group,
+            &mut all_candidate_files,
+        )?
+    };
+
+    Ok(CandidateFilePreviewResponse {
+        target_relative_path,
+        total_candidate_files: all_candidate_files.len(),
+        limit_per_group,
+        groups,
+    })
+}
+
 pub(crate) fn flattened_plan_rules(plan: Option<&RuleSelectionPlan>) -> Vec<String> {
     plan.map(|plan| {
         plan.segments
@@ -122,6 +203,170 @@ pub(crate) fn flattened_plan_rules(plan: Option<&RuleSelectionPlan>) -> Vec<Stri
             .collect()
     })
     .unwrap_or_default()
+}
+
+fn clamp_candidate_file_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_CANDIDATE_FILE_LIMIT_PER_GROUP)
+        .clamp(1, MAX_CANDIDATE_FILE_LIMIT_PER_GROUP)
+}
+
+fn manual_candidate_file_groups(
+    request: &RunCreateRequest,
+    display_root: &Path,
+    limit_per_group: usize,
+    all_candidate_files: &mut BTreeSet<String>,
+) -> Result<Vec<CandidateFilePreviewGroup>> {
+    effective_rules(request)
+        .into_iter()
+        .map(|rule_id| {
+            let rule = rule_by_id(&rule_id)
+                .ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+            let files = candidate_files_for_rule(request, display_root, rule, None)?;
+            Ok(candidate_file_group(
+                format!("rule:{}", rule.id),
+                rule.name.to_string(),
+                None,
+                rule,
+                files,
+                limit_per_group,
+                all_candidate_files,
+            ))
+        })
+        .collect()
+}
+
+fn automatic_candidate_file_groups(
+    request: &RunCreateRequest,
+    display_root: &Path,
+    limit_per_group: usize,
+    all_candidate_files: &mut BTreeSet<String>,
+) -> Result<Vec<CandidateFilePreviewGroup>> {
+    let plan = request
+        .rule_selection_plan
+        .as_ref()
+        .ok_or_else(|| anyhow!("rule selection plan is required for automatic preview"))?;
+    let mut groups = Vec::new();
+    for segment in &plan.segments {
+        for rule_id in &segment.rules {
+            let rule = rule_by_id(rule_id)
+                .ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+            let files = candidate_files_for_rule(
+                request,
+                display_root,
+                rule,
+                Some(&segment.relative_path),
+            )?;
+            let segment_label = display_segment_label(&segment.relative_path);
+            groups.push(candidate_file_group(
+                format!("segment:{}:rule:{}", segment.relative_path, rule.id),
+                format!("{segment_label} - {}", rule.name),
+                Some(segment.relative_path.clone()),
+                rule,
+                files,
+                limit_per_group,
+                all_candidate_files,
+            ));
+        }
+    }
+    Ok(groups)
+}
+
+fn candidate_files_for_rule(
+    request: &RunCreateRequest,
+    display_root: &Path,
+    rule: &RuleDefinition,
+    segment_relative_path: Option<&str>,
+) -> Result<Vec<String>> {
+    let files = prepare_source_request(request, rule.language)?.1;
+    let mut files = files
+        .into_iter()
+        .map(PathBuf::from)
+        .map(|path| relative_path(display_root, &path))
+        .filter(|path| {
+            segment_relative_path
+                .map(|segment| path_is_inside_segment(path, segment))
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn candidate_file_group(
+    id: String,
+    label: String,
+    segment_relative_path: Option<String>,
+    rule: &RuleDefinition,
+    files: Vec<String>,
+    limit_per_group: usize,
+    all_candidate_files: &mut BTreeSet<String>,
+) -> CandidateFilePreviewGroup {
+    let total_files = files.len();
+    all_candidate_files.extend(files.iter().cloned());
+    let files = files
+        .into_iter()
+        .take(limit_per_group)
+        .map(|relative_path| CandidateFilePreviewFile { relative_path })
+        .collect::<Vec<_>>();
+    let hidden_files = total_files.saturating_sub(files.len());
+
+    CandidateFilePreviewGroup {
+        id,
+        label,
+        segment_relative_path,
+        rule_id: rule.id.to_string(),
+        rule_name: rule.name.to_string(),
+        language: rule.language,
+        total_files,
+        hidden_files,
+        files,
+    }
+}
+
+fn path_is_inside_segment(path: &str, segment: &str) -> bool {
+    let segment = segment.trim_matches('/');
+    if segment.is_empty() || segment == "." {
+        return true;
+    }
+    path == segment || path.starts_with(&format!("{segment}/"))
+}
+
+fn display_segment_label(segment: &str) -> String {
+    let segment = segment.trim_matches('/');
+    if segment.is_empty() || segment == "." {
+        "Repository root".to_string()
+    } else {
+        segment.to_string()
+    }
+}
+
+fn candidate_target_root(target_path: &Path) -> Result<PathBuf> {
+    let target_path = std::fs::canonicalize(target_path)
+        .with_context(|| format!("target path does not exist: {}", target_path.display()))?;
+    if target_path.is_file() {
+        return target_path
+            .parent()
+            .ok_or_else(|| anyhow!("target file has no parent directory"))
+            .map(Path::to_path_buf);
+    }
+    Ok(target_path)
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string();
+    if relative.is_empty() {
+        ".".to_string()
+    } else {
+        relative
+    }
 }
 
 pub(crate) fn selected_model(request: &RunCreateRequest) -> Result<String> {

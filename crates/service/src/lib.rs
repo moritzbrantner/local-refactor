@@ -46,9 +46,9 @@ pub use patch_plan::{
 #[cfg(test)]
 pub(crate) use run_intake::effective_config_for_paths;
 pub(crate) use run_intake::{
-    effective_config_for, effective_rules, normalize_request, patch_plan_request,
-    prepare_source_request, request_target_path, rule_selection_plan_for_request, selected_model,
-    validation_root,
+    candidate_file_preview_for_request, effective_config_for, effective_rules, normalize_request,
+    patch_plan_request, prepare_source_request, request_target_path,
+    rule_selection_plan_for_request, selected_model, validation_root,
 };
 
 pub type ModelProgressSink = Arc<dyn Fn(ModelDownloadProgress) + Send + Sync>;
@@ -146,6 +146,15 @@ pub struct RunCreateRequest {
     protected_paths: Vec<String>,
     #[serde(default = "default_repair_budget")]
     repair_budget: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CandidateFilePreviewRequest {
+    #[serde(flatten)]
+    run: RunCreateRequest,
+    #[serde(default)]
+    limit_per_group: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,6 +309,10 @@ pub fn router(state: ServiceState) -> Router {
         .route("/api/repositories/{id}/folders", get(repository_folders))
         .route("/api/analyze", post(analyze))
         .route("/api/runs", post(create_run).get(list_runs))
+        .route(
+            "/api/runs/candidate-file-preview",
+            post(candidate_file_preview),
+        )
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/review", get(run_review))
         .route("/api/runs/{id}/cancel", post(cancel_run))
@@ -354,6 +367,20 @@ async fn rule_selection_plan(
             effective_config,
         })
         .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn candidate_file_preview(
+    State(state): State<ServiceState>,
+    Json(request): Json<CandidateFilePreviewRequest>,
+) -> impl IntoResponse {
+    match candidate_file_preview_for_request(&state.db, request.run, request.limit_per_group) {
+        Ok(preview) => Json(preview).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -1107,6 +1134,9 @@ fn find_analyzer_script() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use local_refactor_core::rule_selection::{
+        RuleSelectionReason, RuleSelectionReasonSource, RuleSelectionSegment,
+    };
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
@@ -1125,6 +1155,35 @@ mod tests {
             .unwrap();
         assert!(status.success());
         dir
+    }
+
+    fn write_file(path: &Path, content: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn repository_request(
+        db: &Database,
+        repo: &TempDir,
+        target_relative_path: &str,
+        rules: Vec<&str>,
+    ) -> RunCreateRequest {
+        let repository = db
+            .upsert_repository("repo-1", "Repo", &repo.path().to_string_lossy())
+            .unwrap();
+        RunCreateRequest {
+            target_path: None,
+            repository_id: Some(repository.id),
+            repository_root_path: None,
+            target_relative_path: Some(target_relative_path.to_string()),
+            rules: rules.into_iter().map(str::to_string).collect(),
+            rule_selection_plan: None,
+            model: None,
+            test_file_mode: Some(TestFileMode::ReadOnly),
+            validation_commands: Vec::new(),
+            protected_paths: Vec::new(),
+            repair_budget: 2,
+        }
     }
 
     #[tokio::test]
@@ -1348,6 +1407,209 @@ validationCommands = ["echo default validation"]
         .unwrap_err();
 
         assert!(error.to_string().contains("unsupported local coding model"));
+    }
+
+    #[test]
+    fn candidate_preview_excludes_tests_when_tests_are_read_only() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        write_file(
+            &repo.path().join("src/app.test.ts"),
+            "export const testValue = true;\n",
+        );
+
+        let preview = candidate_file_preview_for_request(
+            &db,
+            repository_request(&db, &repo, "src", vec!["simplify-conditional"]),
+            Some(50),
+        )
+        .unwrap();
+
+        assert_eq!(preview.total_candidate_files, 1);
+        assert_eq!(preview.groups[0].files[0].relative_path, "src/app.ts");
+    }
+
+    #[test]
+    fn candidate_preview_includes_tests_when_tests_are_mutable() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        write_file(
+            &repo.path().join("src/app.test.ts"),
+            "export const testValue = true;\n",
+        );
+        let mut request = repository_request(&db, &repo, "src", vec!["simplify-conditional"]);
+        request.test_file_mode = Some(TestFileMode::Mutable);
+
+        let preview = candidate_file_preview_for_request(&db, request, Some(50)).unwrap();
+        let files = preview.groups[0]
+            .files
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(preview.total_candidate_files, 2);
+        assert_eq!(files, vec!["src/app.test.ts", "src/app.ts"]);
+    }
+
+    #[test]
+    fn candidate_preview_excludes_protected_paths() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        write_file(
+            &repo.path().join("src/generated/client.ts"),
+            "export const generated = true;\n",
+        );
+        let mut request = repository_request(&db, &repo, "src", vec!["simplify-conditional"]);
+        request.protected_paths = vec!["generated/**".to_string()];
+
+        let preview = candidate_file_preview_for_request(&db, request, Some(50)).unwrap();
+
+        assert_eq!(preview.total_candidate_files, 1);
+        assert_eq!(preview.groups[0].files[0].relative_path, "src/app.ts");
+    }
+
+    #[test]
+    fn candidate_preview_groups_automatic_segments_by_rule() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        write_file(
+            &repo.path().join("other/app.ts"),
+            "export const other = true;\n",
+        );
+        let mut request = repository_request(&db, &repo, ".", Vec::new());
+        request.rule_selection_plan = Some(RuleSelectionPlan {
+            target_relative_path: ".".to_string(),
+            segments: vec![RuleSelectionSegment {
+                relative_path: "src".to_string(),
+                rules: vec!["simplify-conditional".to_string()],
+                reasons: vec![RuleSelectionReason {
+                    rule_id: "simplify-conditional".to_string(),
+                    source: RuleSelectionReasonSource::Fallback,
+                    message: "TypeScript source files are present".to_string(),
+                }],
+            }],
+        });
+
+        let preview = candidate_file_preview_for_request(&db, request, Some(50)).unwrap();
+
+        assert_eq!(preview.groups.len(), 1);
+        assert_eq!(
+            preview.groups[0].segment_relative_path.as_deref(),
+            Some("src")
+        );
+        assert_eq!(preview.groups[0].rule_id, "simplify-conditional");
+        assert_eq!(preview.groups[0].total_files, 1);
+        assert_eq!(preview.groups[0].files[0].relative_path, "src/app.ts");
+    }
+
+    #[test]
+    fn candidate_preview_groups_manual_rules_by_rule() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        write_file(
+            &repo.path().join("src/lib.rs"),
+            "pub fn value() -> bool { true }\n",
+        );
+
+        let preview = candidate_file_preview_for_request(
+            &db,
+            repository_request(
+                &db,
+                &repo,
+                "src",
+                vec!["simplify-conditional", "rust-extract-helper-function"],
+            ),
+            Some(50),
+        )
+        .unwrap();
+
+        assert_eq!(preview.groups.len(), 2);
+        assert_eq!(preview.groups[0].rule_id, "rust-extract-helper-function");
+        assert_eq!(preview.groups[0].files[0].relative_path, "src/lib.rs");
+        assert_eq!(preview.groups[1].rule_id, "simplify-conditional");
+        assert_eq!(preview.groups[1].files[0].relative_path, "src/app.ts");
+    }
+
+    #[test]
+    fn candidate_preview_caps_groups_and_sorts_paths() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(&repo.path().join("src/c.ts"), "export const c = true;\n");
+        write_file(&repo.path().join("src/a.ts"), "export const a = true;\n");
+        write_file(&repo.path().join("src/b.ts"), "export const b = true;\n");
+
+        let preview = candidate_file_preview_for_request(
+            &db,
+            repository_request(&db, &repo, "src", vec!["simplify-conditional"]),
+            Some(2),
+        )
+        .unwrap();
+        let group = &preview.groups[0];
+        let files = group
+            .files
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(preview.total_candidate_files, 3);
+        assert_eq!(group.total_files, 3);
+        assert_eq!(group.hidden_files, 1);
+        assert_eq!(files, vec!["src/a.ts", "src/b.ts"]);
+    }
+
+    #[test]
+    fn candidate_preview_rejects_invalid_protected_globs() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+        let mut request = repository_request(&db, &repo, "src", vec!["simplify-conditional"]);
+        request.protected_paths = vec!["[".to_string()];
+
+        let error = candidate_file_preview_for_request(&db, request, Some(50)).unwrap_err();
+
+        assert!(error.to_string().contains("invalid protected path glob"));
+    }
+
+    #[test]
+    fn candidate_preview_does_not_create_run_history() {
+        let (_dir, db) = temp_db();
+        let repo = tempfile::tempdir().unwrap();
+        write_file(
+            &repo.path().join("src/app.ts"),
+            "export const value = true;\n",
+        );
+
+        candidate_file_preview_for_request(
+            &db,
+            repository_request(&db, &repo, "src", vec!["simplify-conditional"]),
+            Some(50),
+        )
+        .unwrap();
+
+        assert!(db.list_runs(None).unwrap().is_empty());
     }
 
     #[test]

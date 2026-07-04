@@ -32,6 +32,10 @@ _Avoid_: Ruleset, guess result
 One non-overlapping folder subtree inside a Rule Selection Plan, with the Refactoring Rules that apply to that subtree.
 _Avoid_: Child run, mini job
 
+**Candidate File Preview**:
+A pre-run summary of source files eligible to be modified by the selected Run settings, grouped by rule and/or Rule Selection Segment. Candidate files are not guaranteed edits.
+_Avoid_: Affected files, predicted edits, dry-run diff
+
 **Selection Evidence**:
 A recorded reason explaining why a Refactoring Rule was selected, such as config inheritance, source-file shape, language fallback, or folder markers.
 _Avoid_: Heuristic log

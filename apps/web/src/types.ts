@@ -140,6 +140,29 @@ export type RunReviewResponse = {
   metrics: RunMetrics;
 };
 
+export type CandidateFilePreviewFile = {
+  relativePath: string;
+};
+
+export type CandidateFilePreviewGroup = {
+  id: string;
+  label: string;
+  segmentRelativePath?: string;
+  ruleId: string;
+  ruleName: string;
+  language: "typescript" | "rust";
+  totalFiles: number;
+  hiddenFiles: number;
+  files: CandidateFilePreviewFile[];
+};
+
+export type CandidateFilePreviewResponse = {
+  targetRelativePath: string;
+  totalCandidateFiles: number;
+  limitPerGroup: number;
+  groups: CandidateFilePreviewGroup[];
+};
+
 export type ModelSummary = {
   name: string;
   label: string;
@@ -169,4 +192,5 @@ export type RunDraft = {
   usesModelPlannedRules: boolean;
   mode: "automatic" | "manual";
   ruleSelectionPlan?: RuleSelectionPlan;
+  candidateFilePreview: CandidateFilePreviewResponse;
 };

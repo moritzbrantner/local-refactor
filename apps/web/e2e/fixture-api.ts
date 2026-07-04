@@ -43,6 +43,8 @@ type FixtureApiOptions = {
   repositories?: RepositoryRecord[];
   runs?: RunRecord[];
   models?: ModelSummary[];
+  candidatePreviewFails?: boolean;
+  candidatePreview?: CandidateFilePreviewResponse;
 };
 
 type ModelSummary = {
@@ -52,12 +54,31 @@ type ModelSummary = {
   downloaded: boolean;
 };
 
+type CandidateFilePreviewResponse = {
+  targetRelativePath: string;
+  totalCandidateFiles: number;
+  limitPerGroup: number;
+  groups: Array<{
+    id: string;
+    label: string;
+    segmentRelativePath?: string;
+    ruleId: string;
+    ruleName: string;
+    language: "typescript" | "rust";
+    totalFiles: number;
+    hiddenFiles: number;
+    files: Array<{ relativePath: string }>;
+  }>;
+};
+
 const now = "2026-06-30T12:00:00.000Z";
 
 export class FixtureApi {
   repositories: RepositoryRecord[];
   runs: RunRecord[];
   models: ModelSummary[];
+  candidatePreviewFails: boolean;
+  candidatePreview: CandidateFilePreviewResponse | null;
   lastRunRequest: Record<string, unknown> | null = null;
   revertCalls: string[] = [];
 
@@ -65,6 +86,8 @@ export class FixtureApi {
     this.repositories = options.repositories ?? [];
     this.runs = options.runs ?? [];
     this.models = options.models ?? [readyModel()];
+    this.candidatePreviewFails = options.candidatePreviewFails ?? false;
+    this.candidatePreview = options.candidatePreview ?? null;
   }
 
   async install(page: Page) {
@@ -88,6 +111,20 @@ export class FixtureApi {
               category: "control-flow",
               safetyLevel: "test-required",
               preserves: ["runtime-behavior", "typecheck"],
+              requiresTypeInformation: false,
+              requiresImportGraph: false,
+              planningProfile: "local-transformation",
+            },
+            {
+              id: "normalize-imports",
+              language: "typescript",
+              name: "Normalize Imports",
+              description: "Sorts and groups local import declarations.",
+              executionKind: "deterministic",
+              allowedWrites: "single-file",
+              category: "declaration-organization",
+              safetyLevel: "typecheck-required",
+              preserves: ["runtime-behavior", "exports", "typecheck"],
               requiresTypeInformation: false,
               requiresImportGraph: false,
               planningProfile: "local-transformation",
@@ -119,6 +156,23 @@ export class FixtureApi {
             testFileMode: "readOnly",
           },
         });
+      }
+
+      if (method === "POST" && path === "/api/runs/candidate-file-preview") {
+        if (this.candidatePreviewFails) {
+          return fulfillJson(route, { error: "candidate preview failed" }, 400);
+        }
+        const body = request.postDataJSON() as Record<string, unknown>;
+        const targetRelativePath = String(body.targetRelativePath ?? ".");
+        const testFileMode = String(body.testFileMode ?? "readOnly");
+        const rules = ((body.rules as string[] | undefined)?.length
+          ? (body.rules as string[])
+          : ["simplify-conditional"]) as string[];
+        return fulfillJson(
+          route,
+          this.candidatePreview ??
+            defaultCandidateFilePreview(targetRelativePath, rules, testFileMode),
+        );
       }
 
       if (method === "POST" && path === "/api/repositories/pick") {
@@ -314,6 +368,38 @@ function defaultRuleSelectionPlan(targetRelativePath: string): RuleSelectionPlan
         ],
       },
     ],
+  };
+}
+
+function defaultCandidateFilePreview(
+  targetRelativePath: string,
+  rules: string[],
+  testFileMode: string,
+): CandidateFilePreviewResponse {
+  const segment = targetRelativePath === "." ? "src" : targetRelativePath;
+  const files = [
+    { relativePath: `${segment}/sample.ts` },
+    { relativePath: `${segment}/other.ts` },
+    ...(testFileMode === "mutable" ? [{ relativePath: `${segment}/sample.test.ts` }] : []),
+  ];
+  return {
+    targetRelativePath,
+    totalCandidateFiles: files.length,
+    limitPerGroup: 50,
+    groups: rules.map((ruleId) => {
+      const ruleName = ruleId === "normalize-imports" ? "Normalize Imports" : "Simplify Conditional";
+      return {
+        id: `segment:${segment}:rule:${ruleId}`,
+        label: `${segment} - ${ruleName}`,
+        segmentRelativePath: segment,
+        ruleId,
+        ruleName,
+        language: "typescript",
+        totalFiles: files.length,
+        hiddenFiles: 0,
+        files,
+      };
+    }),
   };
 }
 
