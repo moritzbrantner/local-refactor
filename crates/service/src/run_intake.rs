@@ -8,7 +8,7 @@ use local_refactor_core::{
         default_protected_paths, find_project_config, load_config_file, ConfigLayer,
         EffectiveConfig,
     },
-    path_policy::PathPolicy,
+    path_policy::{is_source_for_language, PathDecision, PathPolicy},
     rule_selection::{select_rules, RuleSelectionInput, RuleSelectionPlan},
     rules::{planning_context_for, Language, RuleDefinition, StackContext},
 };
@@ -149,13 +149,14 @@ pub(crate) fn prepare_source_request(
     let target_path = request_target_path(request)?;
     let target_path = std::fs::canonicalize(target_path)
         .with_context(|| format!("target path does not exist: {target_path}"))?;
-    let target_root = if target_path.is_file() {
+    let target_is_file = target_path.is_file();
+    let target_root = if target_is_file {
         target_path
             .parent()
             .ok_or_else(|| anyhow!("target file has no parent directory"))?
             .to_path_buf()
     } else {
-        target_path
+        target_path.clone()
     };
 
     let mut protected = default_protected_paths();
@@ -166,11 +167,21 @@ pub(crate) fn prepare_source_request(
         &protected,
         request.test_file_mode.unwrap_or_default(),
     )?;
-    let files = policy
-        .mutable_source_files(language)?
-        .into_iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect();
+    let files = if target_is_file {
+        if is_source_for_language(&target_path, language)
+            && policy.decision_for(&target_path) == PathDecision::Mutable
+        {
+            vec![target_path.to_string_lossy().to_string()]
+        } else {
+            Vec::new()
+        }
+    } else {
+        policy
+            .mutable_source_files(language)?
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect()
+    };
 
     Ok((policy, files))
 }

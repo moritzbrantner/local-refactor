@@ -153,6 +153,18 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         "Current mutable source files:".to_string(),
         files,
     ];
+    if is_documentation_only_rule(&request.rule_id) {
+        parts.push(
+            "Documentation-only rules may add documentation comments, but must not rewrite code, reorder declarations, or add compiler directive comments."
+                .to_string(),
+        );
+        if request.language == Language::TypeScript {
+            parts.push(
+                "Do not add TypeScript directive comments such as @ts-nocheck, @ts-check, @ts-ignore, or @ts-expect-error."
+                    .to_string(),
+            );
+        }
+    }
     if request.validation_commands.is_empty() {
         parts.push(
             "No validation commands were provided; keep the plan limited to changes that can be reasoned about from static source inspection and the rule policy."
@@ -235,6 +247,7 @@ pub(crate) fn parse_patch_plan_response(
                         absolute.display()
                     ));
                 }
+                validate_documentation_only_update(request, &file.path, original, &content)?;
                 edits.push(PatchPlanEdit {
                     file_path: absolute.to_string_lossy().to_string(),
                     original_content: (*original).to_string(),
@@ -312,6 +325,122 @@ fn validate_allowed_writes(allowed: AllowedWrites, plan: &PatchPlanV1) -> Result
         }
     }
     Ok(())
+}
+
+fn validate_documentation_only_update(
+    request: &PatchPlanModelRequest,
+    path: &str,
+    original: &str,
+    updated: &str,
+) -> Result<()> {
+    if !is_documentation_only_rule(&request.rule_id) {
+        return Ok(());
+    }
+
+    if request.language == Language::TypeScript {
+        for directive in ["@ts-nocheck", "@ts-check", "@ts-ignore", "@ts-expect-error"] {
+            if updated.contains(directive) && !original.contains(directive) {
+                return Err(anyhow!(
+                    "{}: documentation-only patch added forbidden TypeScript directive comment {}",
+                    path,
+                    directive
+                ));
+            }
+        }
+    }
+
+    let original_code = code_without_comments(request.language, original);
+    let updated_code = code_without_comments(request.language, updated);
+    if normalize_code_text(&original_code) != normalize_code_text(&updated_code) {
+        return Err(anyhow!(
+            "{}: documentation-only patch changed non-comment code",
+            path
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_documentation_only_rule(rule_id: &str) -> bool {
+    matches!(
+        rule_id,
+        "add-documentation-comments" | "rust-add-documentation-comments"
+    )
+}
+
+fn normalize_code_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn code_without_comments(language: Language, value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                while let Some(comment_character) = chars.next() {
+                    if comment_character == '\n' {
+                        output.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = '\0';
+                for comment_character in chars.by_ref() {
+                    if previous == '*' && comment_character == '/' {
+                        break;
+                    }
+                    if comment_character == '\n' {
+                        output.push('\n');
+                    }
+                    previous = comment_character;
+                }
+            }
+            '"' => {
+                output.push(character);
+                copy_quoted(&mut chars, &mut output, '"');
+            }
+            '\'' if language == Language::TypeScript => {
+                output.push(character);
+                copy_quoted(&mut chars, &mut output, '\'');
+            }
+            '\'' if language == Language::Rust => {
+                output.push(character);
+                copy_quoted(&mut chars, &mut output, '\'');
+            }
+            '`' if language == Language::TypeScript => {
+                output.push(character);
+                copy_quoted(&mut chars, &mut output, '`');
+            }
+            _ => output.push(character),
+        }
+    }
+    output
+}
+
+fn copy_quoted(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    output: &mut String,
+    quote: char,
+) {
+    let mut escaped = false;
+    for character in chars.by_ref() {
+        output.push(character);
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == quote {
+            break;
+        }
+    }
 }
 
 fn patch_plan_shape_error(value: &Value, error: serde_json::Error) -> anyhow::Error {
@@ -548,6 +677,73 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("got keys: response, summary"));
         assert!(message.contains("missing field"));
+    }
+
+    #[test]
+    fn documentation_only_rules_accept_comment_only_updates() {
+        let dir = tempdir().unwrap();
+        let sample = dir.path().join("src/sample.ts");
+        std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+        let original = "export function value() {\n  return true;\n}\n";
+        std::fs::write(&sample, original).unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let mut request = request(
+            dir.path().to_path_buf(),
+            original,
+            AllowedWrites::SingleFile,
+        );
+        request.rule_id = "add-documentation-comments".to_string();
+        let response = r#"{"summary":"x","files":[{"path":"src/sample.ts","action":"update","content":"/** Returns true. */\nexport function value() {\n  return true;\n}\n"}],"preservedExports":["value"],"validationCommand":"true"}"#;
+
+        let edits = parse_patch_plan_response(&request, &policy, response).unwrap();
+
+        assert_eq!(edits.len(), 1);
+    }
+
+    #[test]
+    fn documentation_only_rules_reject_typecheck_directives() {
+        let dir = tempdir().unwrap();
+        let sample = dir.path().join("src/sample.ts");
+        std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+        let original = "export function value() {\n  return true;\n}\n";
+        std::fs::write(&sample, original).unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let mut request = request(
+            dir.path().to_path_buf(),
+            original,
+            AllowedWrites::SingleFile,
+        );
+        request.rule_id = "add-documentation-comments".to_string();
+        let response = r#"{"summary":"x","files":[{"path":"src/sample.ts","action":"update","content":"// @ts-nocheck\n/** Returns true. */\nexport function value() {\n  return true;\n}\n"}],"preservedExports":["value"],"validationCommand":"true"}"#;
+
+        let error = parse_patch_plan_response(&request, &policy, response).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("forbidden TypeScript directive comment @ts-nocheck"));
+    }
+
+    #[test]
+    fn documentation_only_rules_reject_non_comment_code_changes() {
+        let dir = tempdir().unwrap();
+        let sample = dir.path().join("src/sample.ts");
+        std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+        let original = "export function value() {\n  return true;\n}\n";
+        std::fs::write(&sample, original).unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let mut request = request(
+            dir.path().to_path_buf(),
+            original,
+            AllowedWrites::SingleFile,
+        );
+        request.rule_id = "add-documentation-comments".to_string();
+        let response = r#"{"summary":"x","files":[{"path":"src/sample.ts","action":"update","content":"/** Returns false. */\nexport function value() {\n  return false;\n}\n"}],"preservedExports":["value"],"validationCommand":"true"}"#;
+
+        let error = parse_patch_plan_response(&request, &policy, response).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("documentation-only patch changed non-comment code"));
     }
 
     #[test]

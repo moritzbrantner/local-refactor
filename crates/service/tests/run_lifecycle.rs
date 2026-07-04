@@ -423,6 +423,59 @@ async fn model_planned_runs_request_one_primary_source_file_at_a_time() {
 }
 
 #[tokio::test]
+async fn file_target_model_planned_runs_only_collect_target_file() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let harness = Harness::with_repo_and_gateway(
+        tempfile::tempdir().unwrap(),
+        Arc::new(RecordingModelGateway {
+            requests: requests.clone(),
+            response: RecordingModelResponse::DocumentationPerFile,
+        }),
+    );
+    let alpha = harness.repo.path().join("src/alpha.ts");
+    let beta = harness.repo.path().join("src/beta.ts");
+    let beta_original = "export function beta() {\n  return \"beta\";\n}\n";
+    std::fs::create_dir_all(alpha.parent().unwrap()).unwrap();
+    std::fs::write(
+        &alpha,
+        "export function alpha() {\n  return \"alpha\";\n}\n",
+    )
+    .unwrap();
+    std::fs::write(&beta, beta_original).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": alpha.to_string_lossy(),
+                "rules": ["add-documentation-comments"],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "validationCommands": ["grep -q 'Documentation for alpha.ts' alpha.ts"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, "succeeded").await;
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].files.len(), 1);
+    assert_eq!(recorded[0].files[0].relative_path, "alpha.ts");
+    assert!(std::fs::read_to_string(&alpha)
+        .unwrap()
+        .contains("Documentation for alpha.ts"));
+    assert_eq!(std::fs::read_to_string(&beta).unwrap(), beta_original);
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        diff.json["files"][0]["filePath"].as_str().unwrap(),
+        alpha.to_string_lossy()
+    );
+}
+
+#[tokio::test]
 async fn oversized_model_planned_file_fails_before_generation() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let harness = Harness::with_repo_and_gateway(
