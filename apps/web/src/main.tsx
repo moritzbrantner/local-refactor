@@ -307,6 +307,7 @@ function App() {
         selectedRuleRecords.length > 0
           ? selectedRuleRecords.map((rule) => rule.name)
           : selectedRules,
+      ruleSummaries: selectedRuleRecords,
       model: selectedModel,
       modelLabel: model?.label ?? selectedModel,
       testFileMode,
@@ -504,6 +505,11 @@ function App() {
                         <strong>{rule.name}</strong>
                         <span className="language-badge">{languageLabel(rule.language)}</span>
                       </span>
+                      <span className="rule-metadata">
+                        <span>{rule.executionKind === "modelPlanned" ? "model planned" : "deterministic"}</span>
+                        <span>{formatToken(rule.safetyLevel)}</span>
+                        <span>{formatToken(rule.allowedWrites)}</span>
+                      </span>
                       <small>{rule.description}</small>
                     </span>
                   </label>
@@ -580,9 +586,24 @@ function App() {
               <div className="settings-grid">
                 <section>
                   <h4>Rules</h4>
-                  <ul>
-                    {pendingRunDraft.ruleLabels.map((rule) => (
-                      <li key={rule}>{rule}</li>
+                  <ul className="rule-summary-list">
+                    {pendingRunDraft.ruleSummaries.map((rule) => (
+                      <li key={rule.id}>
+                        <strong>{rule.name}</strong>
+                        <span className="rule-metadata">
+                          <span>{languageLabel(rule.language)}</span>
+                          <span>
+                            {rule.executionKind === "modelPlanned"
+                              ? "model planned"
+                              : "deterministic"}
+                          </span>
+                          <span>{formatToken(rule.safetyLevel)}</span>
+                          <span>{formatToken(rule.allowedWrites)}</span>
+                        </span>
+                        <span className="rule-preserves">
+                          Preserves {rule.preserves.map(formatToken).join(", ")}
+                        </span>
+                      </li>
                     ))}
                   </ul>
                 </section>
@@ -823,6 +844,13 @@ function lines(value: string): string[] {
 
 function languageLabel(language: Rule["language"]): string {
   return language === "rust" ? "Rust" : "TypeScript";
+}
+
+function formatToken(value: string): string {
+  return value
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function runTargetLabel(run: RunRecord): string {

@@ -28,11 +28,14 @@ test("user can configure and start a deterministic refactor run", async ({ page 
 
   await page.goto("/");
   await expect(page.locator("input").first()).toHaveValue("Fixture Repo");
+  await expect(page.getByText("Test Required").first()).toBeVisible();
+  await expect(page.getByText("Single File").first()).toBeVisible();
 
   await page.getByLabel("Validation commands").fill("bun test\nbun run typecheck");
   await page.getByLabel("Protected paths").fill("src/generated/**\ndist/**");
   await page.getByRole("button", { name: /Start run/ }).click();
   await expect(page.getByRole("heading", { name: "Review run" })).toBeVisible();
+  await expect(page.locator(".run-review").getByText("Preserves Runtime Behavior, Typecheck")).toBeVisible();
   await expect(page.locator(".run-review").getByText("bun run typecheck")).toBeVisible();
   await page.getByRole("button", { name: /Confirm and start run/ }).click();
 

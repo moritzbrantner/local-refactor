@@ -13,7 +13,7 @@ use std::{
     process::Command as StdCommand,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -58,6 +58,10 @@ struct RepairingModelGateway {
     generated_plans: Arc<AtomicUsize>,
 }
 
+struct RecordingModelGateway {
+    last_request: Arc<Mutex<Option<local_refactor_service::PatchPlanModelRequest>>>,
+}
+
 impl ModelGateway for RepairingModelGateway {
     fn list_models(&self) -> ModelFuture<'_, ModelsResponse> {
         ReadyModelGateway.list_models()
@@ -84,6 +88,29 @@ impl ModelGateway for RepairingModelGateway {
                 fake_patch_plan(&request.rule_id)
             })
         })
+    }
+}
+
+impl ModelGateway for RecordingModelGateway {
+    fn list_models(&self) -> ModelFuture<'_, ModelsResponse> {
+        ReadyModelGateway.list_models()
+    }
+
+    fn ensure_model_available_with_progress<'a>(
+        &'a self,
+        name: &'a str,
+        on_progress: ModelProgressSink,
+    ) -> ModelFuture<'a, ()> {
+        ReadyModelGateway.ensure_model_available_with_progress(name, on_progress)
+    }
+
+    fn generate_patch_plan<'a>(
+        &'a self,
+        _model: &'a str,
+        request: local_refactor_service::PatchPlanModelRequest,
+    ) -> ModelFuture<'a, String> {
+        *self.last_request.lock().unwrap() = Some(request.clone());
+        Box::pin(async move { Ok(fake_patch_plan(&request.rule_id)) })
     }
 }
 
@@ -239,6 +266,53 @@ async fn split_file_by_responsibility_satisfies_run_supported_contract() {
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn model_planned_split_file_request_includes_planning_context() {
+    let last_request = Arc::new(Mutex::new(None));
+    let harness = Harness::with_repo_and_gateway(
+        tempfile::tempdir().unwrap(),
+        Arc::new(RecordingModelGateway {
+            last_request: last_request.clone(),
+        }),
+    );
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, user_profile_source()).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["split-file-by-responsibility"],
+                "model": "qwen2.5-coder:7b",
+                "testFileMode": "readOnly",
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, "succeeded").await;
+
+    let request = last_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.rule_id, "split-file-by-responsibility");
+    assert!(request
+        .planning_context
+        .preservation_rules
+        .iter()
+        .any(|rule| rule.contains("Preserve external imports and exports")));
+    assert!(request
+        .planning_context
+        .structure_rules
+        .iter()
+        .any(|rule| rule.contains("compatibility shims")));
+    assert!(request
+        .planning_context
+        .forbidden_actions
+        .iter()
+        .any(|rule| rule.contains("Do not delete files")));
 }
 
 #[tokio::test]

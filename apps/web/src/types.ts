@@ -4,6 +4,33 @@ export type Rule = {
   name: string;
   description: string;
   executionKind?: "deterministic" | "modelPlanned";
+  allowedWrites: "single-file" | "multi-file-within-target";
+  category:
+    | "control-flow"
+    | "naming"
+    | "extraction"
+    | "deduplication"
+    | "module-organization"
+    | "type-structure"
+    | "declaration-organization"
+    | "documentation";
+  safetyLevel: "syntax-only" | "typecheck-required" | "test-required";
+  preserves: Array<
+    | "runtime-behavior"
+    | "exports"
+    | "public-api"
+    | "typecheck"
+    | "comments"
+    | "formatting-intent"
+  >;
+  requiresTypeInformation: boolean;
+  requiresImportGraph: boolean;
+  planningProfile:
+    | "local-transformation"
+    | "local-extraction"
+    | "module-split"
+    | "public-contract-shape"
+    | "documentation-only";
 };
 
 export type RepositoryRecord = {
@@ -105,6 +132,7 @@ export type RunDraft = {
   targetLabel: string;
   rules: string[];
   ruleLabels: string[];
+  ruleSummaries: Rule[];
   model: string;
   modelLabel: string;
   testFileMode: "readOnly" | "mutable";

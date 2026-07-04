@@ -1,8 +1,9 @@
 use crate::db::PatchAction;
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
+    config::TestFileMode,
     path_policy::{PathDecision, PathPolicy},
-    rules::{AllowedWrites, Language},
+    rules::{AllowedWrites, Language, RulePlanningContext, StackContext},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,6 +22,9 @@ pub struct PatchPlanModelRequest {
     pub files: Vec<PatchPlanSourceFile>,
     pub validation_commands: Vec<String>,
     pub allowed_writes: AllowedWrites,
+    pub planning_context: RulePlanningContext,
+    pub test_file_mode: TestFileMode,
+    pub stack_contexts: Vec<StackContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repair_context: Option<PatchPlanRepairContext>,
 }
@@ -103,16 +107,54 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         format!("Rule name: {}", request.rule_name),
         format!("Rule description: {}", request.rule_description),
         format!("Allowed writes: {:?}", request.allowed_writes),
+        format!("Test file mode: {:?}", request.test_file_mode),
+        format!(
+            "Detected stack contexts: {}",
+            request
+                .stack_contexts
+                .iter()
+                .map(|context| context.display_name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         format!(
             "Validation commands: {}",
-            request.validation_commands.join(" && ")
+            if request.validation_commands.is_empty() {
+                "none".to_string()
+            } else {
+                request.validation_commands.join(" && ")
+            }
         ),
+        format_policy_section(
+            "Workflow rules",
+            &request.planning_context.workflow_rules,
+        ),
+        format_policy_section(
+            "Preservation rules",
+            &request.planning_context.preservation_rules,
+        ),
+        format_policy_section(
+            "Structure rules",
+            &request.planning_context.structure_rules,
+        ),
+        format_policy_section("Testing rules", &request.planning_context.testing_rules),
+        format_policy_section(
+            "Forbidden actions",
+            &request.planning_context.forbidden_actions,
+        ),
+        format_policy_section("Stack rules", &request.planning_context.stack_rules),
         "Use action update for existing files and action create for new files. Do not use action delete.".to_string(),
         "Preserve runtime behavior, exports, and typecheck unless the rule explicitly requires internal code movement.".to_string(),
         "Use the provided validation commands to reason about whether the refactor is safe.".to_string(),
         "Current mutable source files:".to_string(),
         files,
     ];
+    if request.validation_commands.is_empty() {
+        parts.push(
+            "No validation commands were provided; keep the plan limited to changes that can be reasoned about from static source inspection and the rule policy."
+                .to_string(),
+        );
+    }
     if let Some(repair) = &request.repair_context {
         parts.push("Repair context:".to_string());
         parts.push(format!(
@@ -121,6 +163,21 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         ));
     }
     parts.join("\n\n")
+}
+
+fn format_policy_section(title: &str, rules: &[String]) -> String {
+    if rules.is_empty() {
+        return format!("{title}: none");
+    }
+
+    format!(
+        "{title}:\n{}",
+        rules
+            .iter()
+            .map(|rule| format!("- {rule}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 pub(crate) fn parse_patch_plan_response(
@@ -290,8 +347,35 @@ mod tests {
             }],
             validation_commands: vec!["true".to_string()],
             allowed_writes,
+            planning_context: local_refactor_core::rules::planning_context_for(
+                local_refactor_core::rules::rule_by_id("extract-duplicate-block").unwrap(),
+                TestFileMode::Mutable,
+                &[StackContext::TypeScriptBackend],
+            ),
+            test_file_mode: TestFileMode::Mutable,
+            stack_contexts: vec![StackContext::TypeScriptBackend],
             repair_context: None,
         }
+    }
+
+    #[test]
+    fn prompt_includes_policy_context_and_patch_plan_contract() {
+        let dir = tempdir().unwrap();
+        let request = request(
+            dir.path().to_path_buf(),
+            "export function value() { return true; }",
+            AllowedWrites::MultiFileWithinTarget,
+        );
+
+        let prompt = build_prompt(&request);
+
+        assert!(prompt.contains("Return only valid JSON"));
+        assert!(prompt.contains("patch-plan-v1"));
+        assert!(prompt.contains("Preservation rules:"));
+        assert!(prompt.contains("Preserve behavior"));
+        assert!(prompt.contains("TypeScript backend"));
+        assert!(prompt.contains("Allowed writes: MultiFileWithinTarget"));
+        assert!(prompt.contains("Test file mode: Mutable"));
     }
 
     #[test]

@@ -19,6 +19,7 @@ type CatalogEntry = {
   name: string;
   category: string;
   status: string;
+  planningProfile: string;
   safetyLevel: string;
   preserves: string[];
   allowedWrites: string;
@@ -61,6 +62,13 @@ const safetyLevels = new Set([
   "typecheck-required",
   "test-required",
 ]);
+const planningProfiles = new Set([
+  "local-transformation",
+  "local-extraction",
+  "module-split",
+  "public-contract-shape",
+  "documentation-only",
+]);
 const preserves = new Set([
   "runtime-behavior",
   "exports",
@@ -81,6 +89,7 @@ function main() {
     validateCatalog(catalog);
   }
   validatePublicRules(catalogs);
+  validateCatalogMatchesRuntime(catalogs);
   validateRunSupportedMarkers(catalogs);
 
   if (errors.length > 0) {
@@ -133,6 +142,7 @@ function validateEntry(entry: CatalogEntry, seen: Set<string>) {
   requireString(entry, "fixtureDirectory");
   requireEnum(entry.category, categories, entry.id, "category");
   requireEnum(entry.status, statuses, entry.id, "status");
+  requireEnum(entry.planningProfile, planningProfiles, entry.id, "planningProfile");
   requireEnum(entry.safetyLevel, safetyLevels, entry.id, "safetyLevel");
   requireEnum(entry.allowedWrites, allowedWrites, entry.id, "allowedWrites");
 
@@ -176,15 +186,80 @@ function validateEntry(entry: CatalogEntry, seen: Set<string>) {
 }
 
 function validatePublicRules(catalogs: Catalog[]) {
-  const rulesSource = readFileSync(rulesPath, "utf8");
-  const publicRules = [...rulesSource.matchAll(/id:\s*"([^"]+)"/g)].map(
-    (match) => match[1],
-  );
+  const publicRules = readRuntimeRules().map((rule) => rule.id);
   const catalogIds = new Set(catalogs.flatMap((catalog) => catalog.entries.map((entry) => entry.id)));
   for (const rule of publicRules) {
     if (!catalogIds.has(rule)) {
       add(`public rule ${rule} is missing from a refactoring catalog`);
     }
+  }
+}
+
+function validateCatalogMatchesRuntime(catalogs: Catalog[]) {
+  const runtimeRules = new Map(readRuntimeRules().map((rule) => [rule.id, rule]));
+  const entries = catalogs.flatMap((catalog) => catalog.entries);
+  for (const entry of entries) {
+    const runtime = runtimeRules.get(entry.id);
+    if (!runtime) continue;
+    compare(entry, runtime, "category");
+    compare(entry, runtime, "safetyLevel");
+    compare(entry, runtime, "allowedWrites");
+    compare(entry, runtime, "planningProfile");
+    compare(entry, runtime, "requiresTypeInformation");
+    compare(entry, runtime, "requiresImportGraph");
+    if (JSON.stringify(entry.preserves) !== JSON.stringify(runtime.preserves)) {
+      add(
+        `${entry.id}: catalog preserves ${JSON.stringify(entry.preserves)} does not match runtime ${JSON.stringify(runtime.preserves)}`,
+      );
+    }
+  }
+}
+
+type RuntimeRule = {
+  id: string;
+  category: string;
+  safetyLevel: string;
+  allowedWrites: string;
+  planningProfile: string;
+  requiresTypeInformation: boolean;
+  requiresImportGraph: boolean;
+  preserves: string[];
+};
+
+function readRuntimeRules(): RuntimeRule[] {
+  const rulesSource = readFileSync(rulesPath, "utf8");
+  return [...rulesSource.matchAll(/RuleDefinition\s*\{([\s\S]*?)\n    \},/g)].map((match) => {
+    const block = match[1];
+    return {
+      id: requireMatch(block, /id:\s*"([^"]+)"/, "id"),
+      category: rustVariant(block, "category", "RuleCategory"),
+      safetyLevel: rustVariant(block, "safety_level", "SafetyLevel"),
+      allowedWrites: rustVariant(block, "allowed_writes", "AllowedWrites"),
+      planningProfile: rustVariant(block, "planning_profile", "PlanningProfile"),
+      requiresTypeInformation: rustBoolean(block, "requires_type_information"),
+      requiresImportGraph: rustBoolean(block, "requires_import_graph"),
+      preserves: [...block.matchAll(/PreservedProperty::([A-Za-z0-9_]+)/g)].map((preserved) =>
+        pascalToKebab(preserved[1]),
+      ),
+    };
+  });
+}
+
+function compare(
+  entry: CatalogEntry,
+  runtime: RuntimeRule,
+  key: keyof Pick<
+    RuntimeRule,
+    | "category"
+    | "safetyLevel"
+    | "allowedWrites"
+    | "planningProfile"
+    | "requiresTypeInformation"
+    | "requiresImportGraph"
+  >,
+) {
+  if (entry[key] !== runtime[key]) {
+    add(`${entry.id}: catalog ${key} ${entry[key]} does not match runtime ${runtime[key]}`);
   }
 }
 
@@ -217,6 +292,32 @@ function requireEnum(
   if (typeof value !== "string" || !allowed.has(value)) {
     add(`${id}: invalid ${key} ${String(value)}`);
   }
+}
+
+function rustVariant(block: string, field: string, enumName: string) {
+  return pascalToKebab(
+    requireMatch(block, new RegExp(`${field}:\\s*${enumName}::([A-Za-z0-9_]+)`), field),
+  );
+}
+
+function rustBoolean(block: string, field: string) {
+  return requireMatch(block, new RegExp(`${field}:\\s*(true|false)`), field) === "true";
+}
+
+function requireMatch(block: string, pattern: RegExp, field: string) {
+  const match = block.match(pattern);
+  if (!match) {
+    add(`runtime rule is missing ${field}`);
+    return "";
+  }
+  return match[1];
+}
+
+function pascalToKebab(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/_/g, "-")
+    .toLowerCase();
 }
 
 function requireFile(path: string, label: string) {

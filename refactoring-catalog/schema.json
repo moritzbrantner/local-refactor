@@ -20,6 +20,7 @@
           "name",
           "category",
           "status",
+          "planningProfile",
           "safetyLevel",
           "preserves",
           "allowedWrites",
@@ -62,6 +63,16 @@
               "llm-eval-only",
               "deterministic-rule",
               "run-supported"
+            ]
+          },
+          "planningProfile": {
+            "type": "string",
+            "enum": [
+              "local-transformation",
+              "local-extraction",
+              "module-split",
+              "public-contract-shape",
+              "documentation-only"
             ]
           },
           "safetyLevel": {

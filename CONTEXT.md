@@ -12,6 +12,14 @@ _Avoid_: Fix, rewrite, migration
 A named, versioned rule that explains when a transformation is allowed, discouraged, or forbidden.
 _Avoid_: Prompt, instruction
 
+**Rule Policy**:
+Machine-readable preservation, structure, testing, and stack-specific constraints derived from a Refactoring Rule before a model-planned run.
+_Avoid_: Prompt text, agent note
+
+**Planning Profile**:
+The rule policy category that shapes model-planned guidance, such as local transformation, local extraction, module split, public contract shape, or documentation only.
+_Avoid_: Refactor type, prompt flavor
+
 **Rule Layer**:
 One of global, project, or run configuration. Layers merge as global, then project, then run.
 _Avoid_: Settings bucket

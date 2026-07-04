@@ -30,6 +30,28 @@ their behavior is exercised through service lifecycle tests and LLM eval tasks.
 Cataloged and LLM-eval-only entries may use placeholder fixture directories so
 the promotion path is explicit.
 
+## Planning profiles
+
+Every catalog entry declares a `planningProfile`. The profile is runtime policy,
+not just documentation: `local_refactor_core` uses it to build model-planned
+guidance for preservation, structure, testing, forbidden actions, and
+stack-specific rules.
+
+Current profiles are:
+
+- `local-transformation`: keep edits local to an existing file.
+- `local-extraction`: extract cohesive helper behavior with clear inputs and
+  outputs.
+- `module-split`: split files by current responsibilities while preserving
+  public import paths with compatibility shims or re-exports.
+- `public-contract-shape`: preserve exported types, schemas, serialized data,
+  and other public contract shapes.
+- `documentation-only`: add comments without changing runtime code.
+
+`bun run check:catalog` compares catalog metadata with the compiled runtime rule
+definitions, including `planningProfile`, safety level, preserved properties,
+write mode, type-information needs, and import-graph needs.
+
 ## LLM eval requirements
 
 Entries with `llmEvalDirectory` must have a matching task JSON file in that
@@ -50,6 +72,7 @@ public API, and typecheck or cargo validation.
 
 ```text
 [ ] Catalog entry exists
+[ ] Planning profile matches the runtime rule definition
 [ ] Fixtures exist
 [ ] Catalog check passes
 [ ] Analyzer positive/no-edit/invalid cases pass, if deterministic

@@ -300,6 +300,40 @@ select {
   font-weight: 400;
 }
 
+.rule-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+  color: #4b5c6a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rule-metadata span {
+  border: 1px solid #d5dee6;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: #ffffff;
+}
+
+.rule-summary-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.rule-summary-list li {
+  display: grid;
+  gap: 4px;
+}
+
+.rule-preserves {
+  color: #697583;
+  font-size: 12px;
+}
+
 .model-select {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);

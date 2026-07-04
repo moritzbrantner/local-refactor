@@ -78,6 +78,13 @@ is inside a Cargo project, the service detects `Cargo.toml` and runs
 `cargo check --all-targets`; if clippy is available it also runs
 `cargo clippy --all-targets -- -D warnings`.
 
+Model-planned rules also receive runtime rule policy before the model is asked
+for a `patch-plan-v1`. The policy is built from the selected refactoring rule,
+detected stack context, and Test File Mode, and it states behavior preservation,
+public contract, structure, testing, forbidden-action, and stack-specific
+constraints. The model still returns only the strict JSON patch plan; the
+service validates that plan before writing.
+
 ## Configuration
 
 Global config:
@@ -185,11 +192,17 @@ documentation, and Rust rules request a local model `patch-plan-v1`, validate
 the plan against mutable scope, protected paths, and write mode, then write
 through the patch journal before running validation commands.
 
+Catalog metadata is mirrored in the compiled runtime rule definitions. The
+catalog check fails if fields such as planning profile, safety level, preserved
+properties, allowed writes, type-information needs, or import-graph needs drift
+from `local_refactor_core`.
+
 To add a new refactoring kind:
 
 1. Add a catalog entry with a unique kebab-case id.
 2. Add or create its fixture directory under the language's catalog or worker fixture path.
-3. Add an analyzer manifest and fixtures if it is deterministic.
-4. Add an LLM eval task under `scripts/llm-evals/<language>` when that language has an eval runner.
-5. Add a service run-supported helper assertion before marking it `run-supported`.
-6. Run `bun run check` and, for model-planned kinds, `bun run check:llm`.
+3. Add matching runtime metadata, including planning profile and preserved properties.
+4. Add an analyzer manifest and fixtures if it is deterministic.
+5. Add an LLM eval task under `scripts/llm-evals/<language>` when that language has an eval runner.
+6. Add a service run-supported helper assertion before marking it `run-supported`.
+7. Run `bun run check` and, for model-planned kinds, `bun run check:llm`.

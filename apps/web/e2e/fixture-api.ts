@@ -65,9 +65,18 @@ export class FixtureApi {
           rules: [
             {
               id: "simplify-conditional",
+              language: "typescript",
               name: "Simplify Conditional",
               description:
                 "Rewrites simple boolean-return conditionals into direct return expressions.",
+              executionKind: "deterministic",
+              allowedWrites: "single-file",
+              category: "control-flow",
+              safetyLevel: "test-required",
+              preserves: ["runtime-behavior", "typecheck"],
+              requiresTypeInformation: false,
+              requiresImportGraph: false,
+              planningProfile: "local-transformation",
             },
           ],
         });

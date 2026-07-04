@@ -9,7 +9,7 @@ use local_refactor_core::{
         EffectiveConfig,
     },
     path_policy::PathPolicy,
-    rules::{Language, RuleDefinition},
+    rules::{planning_context_for, Language, RuleDefinition, StackContext},
 };
 use std::{
     collections::BTreeSet,
@@ -122,6 +122,7 @@ pub(crate) fn patch_plan_request(
     files: &[String],
     repair_context: Option<patch_plan::PatchPlanRepairContext>,
 ) -> Result<PatchPlanModelRequest> {
+    let mut stack_contexts = BTreeSet::new();
     let sources = files
         .iter()
         .map(|file| {
@@ -133,12 +134,22 @@ pub(crate) fn patch_plan_request(
                 .replace('\\', "/");
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
+            if let Some(context) = detect_stack_context(rule.language, &relative, &content) {
+                stack_contexts.insert(context);
+            }
             Ok(PatchPlanSourceFile {
                 relative_path: relative,
                 content,
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let stack_contexts = if stack_contexts.is_empty() {
+        default_stack_contexts(rule.language)
+    } else {
+        stack_contexts.into_iter().collect()
+    };
+    let test_file_mode = run_request.test_file_mode.unwrap_or_default();
+    let planning_context = planning_context_for(rule, test_file_mode, &stack_contexts);
 
     Ok(PatchPlanModelRequest {
         rule_id: rule.id.to_string(),
@@ -149,6 +160,9 @@ pub(crate) fn patch_plan_request(
         files: sources,
         validation_commands: run_request.validation_commands.clone(),
         allowed_writes: rule.allowed_writes,
+        planning_context,
+        test_file_mode,
+        stack_contexts,
         repair_context,
     })
 }
@@ -250,4 +264,37 @@ fn default_refactor_rules_path() -> Option<PathBuf> {
         .ancestors()
         .nth(2)
         .map(|workspace_root| workspace_root.join("refactor-rules.toml"))
+}
+
+fn detect_stack_context(
+    language: Language,
+    relative_path: &str,
+    content: &str,
+) -> Option<StackContext> {
+    match language {
+        Language::Rust => Some(StackContext::RustBackend),
+        Language::TypeScript => {
+            if relative_path.ends_with(".tsx") || looks_like_react(content) {
+                Some(StackContext::TypeScriptReact)
+            } else if relative_path.ends_with(".ts") {
+                Some(StackContext::TypeScriptBackend)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn default_stack_contexts(language: Language) -> Vec<StackContext> {
+    match language {
+        Language::Rust => vec![StackContext::RustBackend],
+        Language::TypeScript => vec![StackContext::TypeScriptBackend],
+    }
+}
+
+fn looks_like_react(content: &str) -> bool {
+    content.contains("from \"react\"")
+        || content.contains("from 'react'")
+        || content.contains("react/jsx-runtime")
+        || content.contains("React.")
 }
