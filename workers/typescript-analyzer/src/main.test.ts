@@ -111,6 +111,36 @@ test("skips unreadable or missing files without failing whole plan", () => {
   ).toBe(true);
 });
 
+test("applies multiple enabled rules in deterministic rule order", () => {
+  const source = [
+    'import { beta } from "./tools";',
+    'import { alpha } from "./tools";',
+    "",
+    "export function isReady(value: boolean) {",
+    "  if (value) {",
+    "    return true;",
+    "  }",
+    "  return false;",
+    "}",
+    "",
+  ].join("\n");
+
+  const response = withTempSource("multi-rule", source, (file) =>
+    plan({ files: [file], rules: ["normalize-imports", "simplify-conditional"] }),
+  );
+
+  expect(response.edits).toHaveLength(1);
+  expect(response.edits[0].ruleId).toBe("simplify-conditional");
+  expect(response.edits[0].newContent).toContain(
+    'import { alpha, beta } from "./tools";',
+  );
+  expect(response.edits[0].newContent).toContain("return value;");
+  expect(response.edits[0].summary).toContain(
+    "Replaced if/return true/false with return value",
+  );
+  expect(response.edits[0].summary).toContain("Normalized duplicate named imports");
+});
+
 function fixtureManifests(): RuleFixtureManifest[] {
   return readdirSync(FIXTURE_ROOT)
     .map((directory) => join(FIXTURE_ROOT, directory, "manifest.json"))

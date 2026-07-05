@@ -101,3 +101,38 @@ pub fn default_protected_paths() -> Vec<String> {
     .map(str::to_string)
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_uses_default_rule_and_read_only_tests() {
+        let config = EffectiveConfig::default();
+
+        assert_eq!(config.rules, vec!["simplify-conditional"]);
+        assert_eq!(config.test_file_mode, TestFileMode::ReadOnly);
+        assert!(config.protected_paths.contains(&"Cargo.lock".to_string()));
+        assert!(config.protected_paths.contains(&"bun.lock".to_string()));
+    }
+
+    #[test]
+    fn default_protected_paths_cover_common_build_outputs_and_lockfiles() {
+        let protected = default_protected_paths();
+
+        for expected in [
+            "node_modules/**",
+            "dist/**",
+            "build/**",
+            ".next/**",
+            "coverage/**",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "bun.lock",
+            "Cargo.lock",
+        ] {
+            assert!(protected.contains(&expected.to_string()), "{expected}");
+        }
+    }
+}

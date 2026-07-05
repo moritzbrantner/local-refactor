@@ -147,6 +147,22 @@ mod tests {
             policy.decision_for(Path::new("/repo/src/foo.test.ts")),
             PathDecision::ReadOnly
         );
+        assert_eq!(
+            policy.decision_for(Path::new("/repo/src/foo.spec.tsx")),
+            PathDecision::ReadOnly
+        );
+        assert_eq!(
+            policy.decision_for(Path::new("/repo/src/__tests__/foo.ts")),
+            PathDecision::ReadOnly
+        );
+        assert_eq!(
+            policy.decision_for(Path::new("/repo/src/test/foo.ts")),
+            PathDecision::ReadOnly
+        );
+        assert_eq!(
+            policy.decision_for(Path::new("/repo/src/tests/foo.ts")),
+            PathDecision::ReadOnly
+        );
     }
 
     #[test]

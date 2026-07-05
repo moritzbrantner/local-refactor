@@ -1,11 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { javascript } from "@codemirror/lang-javascript";
-import { rust } from "@codemirror/lang-rust";
-import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import type { Extension } from "@codemirror/state";
-import { EditorState } from "@codemirror/state";
-import { Decoration, EditorView, lineNumbers } from "@codemirror/view";
 import {
   Activity,
   ChevronDown,
@@ -25,6 +19,17 @@ import {
   Trash2,
 } from "lucide-react";
 import { API_BASE_URL, api } from "./api";
+import {
+  FoldersPanel,
+  RepositoriesPanel,
+  RuleSelectionPanel,
+  RunConfigurationForm,
+  RunDetail,
+  RunHistory,
+  RunReviewPanel,
+  RunsPanelShell,
+} from "./components/panels";
+import { CandidateFilePreview } from "./components/previews";
 import "./styles.css";
 import type {
   AnalyzerEdit,
@@ -45,8 +50,23 @@ import type {
   RunRecord,
   RunReviewResponse,
 } from "./types";
+import {
+  appendUniqueRunEvent,
+  changedLineNumbers,
+  flattenedPlanRules,
+  formatToken,
+  languageLabel,
+  latestDownloadProgress,
+  lines,
+  pathsEndWithSameFile,
+  repositoryFilePath,
+  repositoryLabel,
+  ROOT_PATH,
+  ruleName,
+  ruleRecords,
+  runTargetLabel,
+} from "./view-helpers";
 
-const ROOT_PATH = ".";
 const DEFAULT_MODEL = "qwen2.5-coder:7b";
 
 function App() {
@@ -104,7 +124,8 @@ function App() {
       const listedRun = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
       if (
         selectedRunReview &&
-        selectedRunReview.run.id === (selectedRunId ?? listedRun?.id)
+        selectedRunReview.run.id === (selectedRunId ?? listedRun?.id) &&
+        (!listedRun || selectedRunReview.run.updatedAt === listedRun.updatedAt)
       ) {
         return selectedRunReview.run;
       }
@@ -297,7 +318,9 @@ function App() {
         setCandidateFilePreviewLoading(false);
         return;
       }
-      if (!ruleSelectionPlan || ruleSelectionPlan.targetRelativePath !== selectedTargetRelativePath) {
+      const planTargetRelativePath =
+        ruleSelectionPlan?.targetRelativePath === "" ? ROOT_PATH : ruleSelectionPlan?.targetRelativePath;
+      if (!ruleSelectionPlan || planTargetRelativePath !== selectedTargetRelativePath) {
         setCandidateFilePreview(null);
         setCandidateFilePreviewError("");
         setCandidateFilePreviewLoading(true);
@@ -662,106 +685,21 @@ function App() {
   ) {
     const interactive = options.interactive ?? true;
     return (
-      <section className="candidate-preview">
-        <div className="candidate-preview-title">
-          <h4>Candidate File Preview</h4>
-          <span>{preview.totalCandidateFiles} total</span>
-        </div>
-        <div className={interactive ? "candidate-preview-layout" : "candidate-preview-layout summary-only"}>
-          <div className="candidate-groups">
-            {preview.groups.map((group) => (
-              <article className="candidate-group" key={group.id}>
-                <div className="candidate-group-title">
-                  <strong>{group.label}</strong>
-                  <span>{group.totalFiles} files</span>
-                </div>
-                <div className="rule-metadata">
-                  <span>{languageLabel(group.language)}</span>
-                  <span>{group.ruleName}</span>
-                  {group.segmentRelativePath !== undefined && (
-                    <span>
-                      {group.segmentRelativePath === ""
-                        ? "Repository root"
-                        : group.segmentRelativePath}
-                    </span>
-                  )}
-                </div>
-                {group.files.length > 0 ? (
-                  <ul className="candidate-file-list">
-                    {group.files.map((file) => (
-                      <li key={file.relativePath}>
-                        {interactive ? (
-                          <button
-                            type="button"
-                            className={
-                              selectedCandidateFilePath === file.relativePath
-                                ? "candidate-file-button selected"
-                                : "candidate-file-button"
-                            }
-                            onClick={() =>
-                              loadFilePreview(file.relativePath).catch((error) =>
-                                setMessage(error.message),
-                              )
-                            }
-                          >
-                            {file.relativePath}
-                          </button>
-                        ) : (
-                          file.relativePath
-                        )}
-                      </li>
-                    ))}
-                    {group.hiddenFiles > 0 && (
-                      <li className="candidate-hidden">{group.hiddenFiles} more hidden</li>
-                    )}
-                  </ul>
-                ) : (
-                  <p className="empty">No mutable source files matched this group.</p>
-                )}
-              </article>
-            ))}
-            {preview.groups.length === 0 && (
-              <p className="empty">No candidate files matched this run configuration.</p>
-            )}
-          </div>
-          {interactive && (
-            <aside className="file-preview-panel">
-              {filePreviewLoading && <p className="empty">Loading file preview.</p>}
-              {filePreviewError && <small className="field-error">{filePreviewError}</small>}
-              {!filePreviewLoading && !filePreviewError && filePreview && (
-                <>
-                  <div className="file-preview-title">
-                    <strong>{filePreview.relativePath}</strong>
-                    <span>{formatBytes(filePreview.sizeBytes)}</span>
-                  </div>
-                  <CodePreview
-                    content={filePreview.content}
-                    highlightedLines={
-                      fileChangePreview
-                        ? changedLineNumbers(
-                            fileChangePreview.originalContent,
-                            fileChangePreview.newContent,
-                          )
-                        : []
-                    }
-                    language={filePreview.language}
-                    path={filePreview.relativePath}
-                  />
-                  <ChangePreviewSummary
-                    edit={fileChangePreview}
-                    loading={fileChangePreviewLoading}
-                    error={fileChangePreviewError}
-                    unavailable={fileChangePreviewUnavailable}
-                  />
-                </>
-              )}
-              {!filePreviewLoading && !filePreviewError && !filePreview && (
-                <p className="empty">Select a candidate file to preview.</p>
-              )}
-            </aside>
-          )}
-        </div>
-      </section>
+      <CandidateFilePreview
+        preview={preview}
+        interactive={interactive}
+        selectedCandidateFilePath={selectedCandidateFilePath}
+        filePreview={filePreview}
+        filePreviewLoading={filePreviewLoading}
+        filePreviewError={filePreviewError}
+        fileChangePreview={fileChangePreview}
+        fileChangePreviewLoading={fileChangePreviewLoading}
+        fileChangePreviewError={fileChangePreviewError}
+        fileChangePreviewUnavailable={fileChangePreviewUnavailable}
+        onSelectFile={(relativePath) =>
+          loadFilePreview(relativePath).catch((error) => setMessage(error.message))
+        }
+      />
     );
   }
 
@@ -788,926 +726,122 @@ function App() {
           .filter(Boolean)
           .join(" ")}
       >
-        <section className={repositoriesCollapsed ? "panel repositories collapsed" : "panel repositories"}>
-          <div className="panel-title">
-            <GitBranch size={18} />
-            <h2>Repositories</h2>
-            <button
-              type="button"
-              className="icon-button panel-toggle"
-              aria-controls="repositories-panel-body"
-              aria-expanded={!repositoriesCollapsed}
-              aria-label={repositoriesCollapsed ? "Restore repositories" : "Minimize repositories"}
-              title={repositoriesCollapsed ? "Restore repositories" : "Minimize repositories"}
-              onClick={() => setRepositoriesCollapsed((current) => !current)}
-            >
-              {repositoriesCollapsed ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
-            </button>
-          </div>
+        <RepositoriesPanel
+          collapsed={repositoriesCollapsed}
+          repositories={repositories}
+          selectedRepositoryId={selectedRepositoryId}
+          editedLabels={editedLabels}
+          isPickingRepository={isPickingRepository}
+          onToggleCollapsed={() => setRepositoriesCollapsed((current) => !current)}
+          onAddRepository={() => addRepository().catch((error) => setMessage(error.message))}
+          onSelectRepository={setSelectedRepositoryId}
+          onEditLabel={(repositoryId, label) =>
+            setEditedLabels((current) => ({ ...current, [repositoryId]: label }))
+          }
+          onRenameRepository={(repository) =>
+            renameRepository(repository).catch((error) => setMessage(error.message))
+          }
+          onRemoveRepository={(repositoryId) =>
+            removeRepository(repositoryId).catch((error) => setMessage(error.message))
+          }
+        />
 
-          <div id="repositories-panel-body" className="panel-body" hidden={repositoriesCollapsed}>
-            <div className="add-repository">
-              <button
-                className="primary"
-                type="button"
-                onClick={() => addRepository().catch((error) => setMessage(error.message))}
-                disabled={isPickingRepository}
-              >
-                <Plus size={18} />
-                {isPickingRepository ? "Choosing folder" : "Choose root folder"}
-              </button>
-            </div>
+        <FoldersPanel
+          collapsed={foldersCollapsed}
+          selectedRepository={selectedRepository}
+          selectedTargetRelativePath={selectedTargetRelativePath}
+          expandedFolders={expandedFolders}
+          folderChildren={folderChildren}
+          onToggleCollapsed={() => setFoldersCollapsed((current) => !current)}
+          onToggleFolder={(relativePath) =>
+            toggleFolder(relativePath).catch((error) => setMessage(error.message))
+          }
+          onSelectTarget={setSelectedTargetRelativePath}
+        />
 
-            <div className="repository-list">
-              {repositories.map((repository) => (
-                <article
-                  className={
-                    repository.id === selectedRepositoryId
-                      ? "repository-row selected"
-                      : "repository-row"
-                  }
-                  key={repository.id}
-                >
-                  <div className="repository-select">
-                    <input
-                      value={editedLabels[repository.id] ?? repository.label}
-                      onChange={(event) =>
-                        setEditedLabels((current) => ({
-                          ...current,
-                          [repository.id]: event.target.value,
-                        }))
-                      }
-                      onBlur={() =>
-                        renameRepository(repository).catch((error) => setMessage(error.message))
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="repository-path"
-                      onClick={() => setSelectedRepositoryId(repository.id)}
-                    >
-                      <span className="path">{repository.rootPath}</span>
-                      {!repository.available && <span className="unavailable">Unavailable</span>}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() =>
-                      removeRepository(repository.id).catch((error) => setMessage(error.message))
-                    }
-                    title="Remove"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </article>
-              ))}
-              {repositories.length === 0 && <p className="empty">No repositories added.</p>}
-            </div>
-          </div>
-        </section>
-
-        <section className={foldersCollapsed ? "panel folders collapsed" : "panel folders"}>
-          <div className="panel-title">
-            <Folder size={18} />
-            <h2>Folders</h2>
-            <button
-              type="button"
-              className="icon-button panel-toggle"
-              aria-controls="folders-panel-body"
-              aria-expanded={!foldersCollapsed}
-              aria-label={foldersCollapsed ? "Restore folders" : "Minimize folders"}
-              title={foldersCollapsed ? "Restore folders" : "Minimize folders"}
-              onClick={() => setFoldersCollapsed((current) => !current)}
-            >
-              {foldersCollapsed ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
-            </button>
-          </div>
-          <div id="folders-panel-body" className="panel-body" hidden={foldersCollapsed}>
-            {selectedRepository ? (
+        <RunsPanelShell>
+          <RunConfigurationForm
+            selectedTargetRelativePath={selectedTargetRelativePath}
+            selectedModel={selectedModel}
+            models={models}
+            modelsError={modelsError}
+            testFileMode={testFileMode}
+            validationCommands={validationCommands}
+            protectedPaths={protectedPaths}
+            startRunDisabled={startRunDisabled}
+            onSubmit={startRun}
+            onSelectModel={setSelectedModel}
+            onSetTestFileMode={setTestFileMode}
+            onSetValidationCommands={setValidationCommands}
+            onSetProtectedPaths={setProtectedPaths}
+            ruleSelection={
+              <RuleSelectionPanel
+                rules={rules}
+                ruleMode={ruleMode}
+                selectedRules={selectedRules}
+                ruleSelectionPlan={ruleSelectionPlan}
+                ruleSelectionError={ruleSelectionError}
+                rulesSectionCollapsed={rulesSectionCollapsed}
+                expandedRuleItems={expandedRuleItems}
+                rulesSummaryText={rulesSummaryText()}
+                onToggleCollapsed={() => setRulesSectionCollapsed((current) => !current)}
+                onSetRuleMode={setRuleMode}
+                onToggleRule={toggleRule}
+                onToggleRuleItem={toggleRuleItem}
+              />
+            }
+            candidatePreviewState={
               <>
-                <div className="selected-source">
-                  <strong>{selectedRepository.label}</strong>
-                  <span>{selectedRepository.rootPath}</span>
-                </div>
-                <div className="folder-tree">
-                  {renderFolder(ROOT_PATH, selectedRepository.label)}
-                </div>
-              </>
-            ) : (
-              <p className="empty">Select a repository.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="panel runs-panel">
-          <div className="panel-title">
-            <Activity size={18} />
-            <h2>Runs</h2>
-          </div>
-
-          <form className="run-form" onSubmit={startRun}>
-            <div className="target-summary">
-              <span>Target</span>
-              <strong>{selectedTargetRelativePath === ROOT_PATH ? "Repository root" : selectedTargetRelativePath}</strong>
-            </div>
-
-            <div className="field-group">
-              <span>Model</span>
-              <label className="model-select">
-                <Cpu size={16} />
-                <select
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                >
-                  {models.map((model) => (
-                    <option key={model.name} value={model.name}>
-                      {model.label} {model.downloaded ? "downloaded" : "not downloaded"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <small className="field-note">
-                {models.find((model) => model.name === selectedModel)?.description ??
-                  "Selected model is downloaded automatically before the run."}
-              </small>
-              {modelsError && <small className="field-error">{modelsError}</small>}
-            </div>
-
-            <div className="field-group collapsible-field">
-              <div className="collapsible-title">
-                <span>Rules</span>
-                <span className="collapse-summary">{rulesSummaryText()}</span>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-controls="rules-panel-body"
-                  aria-expanded={!rulesSectionCollapsed}
-                  aria-label={rulesSectionCollapsed ? "Expand rules" : "Collapse rules"}
-                  title={rulesSectionCollapsed ? "Expand rules" : "Collapse rules"}
-                  onClick={() => setRulesSectionCollapsed((current) => !current)}
-                >
-                  {rulesSectionCollapsed ? (
-                    <ChevronRight size={16} />
-                  ) : (
-                    <ChevronDown size={16} />
+                {candidateFilePreviewLoading && (
+                  <p className="empty">Previewing candidate files.</p>
+                )}
+                {candidateFilePreviewError && (
+                  <small className="field-error">{candidateFilePreviewError}</small>
+                )}
+                {candidateFilePreview && renderCandidateFilePreview(candidateFilePreview)}
+                {!candidateFilePreviewLoading &&
+                  !candidateFilePreviewError &&
+                  !candidateFilePreview && (
+                    <p className="empty">Candidate files appear after selecting a repository.</p>
                   )}
-                </button>
-              </div>
-              {rulesSectionCollapsed && ruleSelectionError && (
-                <small className="field-error">{ruleSelectionError}</small>
-              )}
-              <div id="rules-panel-body" hidden={rulesSectionCollapsed}>
-                <div className="segmented" aria-label="Rule selection mode">
-                  <button
-                    type="button"
-                    className={ruleMode === "automatic" ? "active" : ""}
-                    onClick={() => setRuleMode("automatic")}
-                  >
-                    Automatic
-                  </button>
-                  <button
-                    type="button"
-                    className={ruleMode === "manual" ? "active" : ""}
-                    onClick={() => setRuleMode("manual")}
-                  >
-                    Manual
-                  </button>
-                </div>
-                {ruleMode === "automatic" ? (
-                  <div className="rule-plan">
-                    {ruleSelectionError && (
-                      <small className="field-error">{ruleSelectionError}</small>
-                    )}
-                    {ruleSelectionPlan?.segments.map((segment) => {
-                      const itemId = `automatic:${segment.relativePath || "."}`;
-                      const isExpanded = expandedRuleItems.has(itemId);
-                      return (
-                        <article className="rule-segment" key={segment.relativePath || "."}>
-                          <button
-                            type="button"
-                            className="rule-item-toggle"
-                            aria-expanded={isExpanded}
-                            onClick={() => toggleRuleItem(itemId)}
-                          >
-                            {isExpanded ? (
-                              <ChevronDown size={16} />
-                            ) : (
-                              <ChevronRight size={16} />
-                            )}
-                            <strong>
-                              {segment.relativePath === ""
-                                ? "Repository root"
-                                : segment.relativePath}
-                            </strong>
-                            <span>{segment.rules.length} rules</span>
-                          </button>
-                          {isExpanded && (
-                            <>
-                              <ul className="rule-summary-list">
-                                {ruleRecords(segment.rules, rules).map((rule) => (
-                                  <li key={rule.id}>
-                                    <strong>{rule.name}</strong>
-                                    <span className="rule-metadata">
-                                      <span>{languageLabel(rule.language)}</span>
-                                      <span>
-                                        {rule.executionKind === "modelPlanned"
-                                          ? "model planned"
-                                          : "deterministic"}
-                                      </span>
-                                      <span>{formatToken(rule.safetyLevel)}</span>
-                                      <span>{formatToken(rule.allowedWrites)}</span>
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                              <ul className="reason-list">
-                                {segment.reasons.slice(0, 4).map((reason) => (
-                                  <li key={`${reason.ruleId}-${reason.source}-${reason.message}`}>
-                                    <span>{formatToken(reason.source)}</span>
-                                    {reason.message}
-                                  </li>
-                                ))}
-                              </ul>
-                            </>
-                          )}
-                        </article>
-                      );
-                    })}
-                    {ruleSelectionPlan && ruleSelectionPlan.segments.length === 0 && (
-                      <p className="empty">No automatic rules matched this target.</p>
-                    )}
-                    {!ruleSelectionPlan && !ruleSelectionError && (
-                      <p className="empty">Detecting rules for this target.</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rule-list">
-                    {rules.map((rule) => {
-                      const itemId = `manual:${rule.id}`;
-                      const isExpanded = expandedRuleItems.has(itemId);
-                      return (
-                        <article className="manual-rule-item" key={rule.id}>
-                          <div className="manual-rule-header">
-                            <label className="manual-rule-check">
-                              <input
-                                type="checkbox"
-                                checked={selectedRules.includes(rule.id)}
-                                onChange={() => toggleRule(rule.id)}
-                              />
-                              <span className="rule-heading">
-                                <strong>{rule.name}</strong>
-                                <span className="language-badge">
-                                  {languageLabel(rule.language)}
-                                </span>
-                              </span>
-                            </label>
-                            <button
-                              type="button"
-                              className="rule-item-toggle compact-toggle"
-                              aria-expanded={isExpanded}
-                              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${rule.name}`}
-                              onClick={() => toggleRuleItem(itemId)}
-                            >
-                              {isExpanded ? (
-                                <ChevronDown size={16} />
-                              ) : (
-                                <ChevronRight size={16} />
-                              )}
-                            </button>
-                          </div>
-                          {isExpanded && (
-                            <div className="manual-rule-detail">
-                              <span className="rule-metadata">
-                                <span>
-                                  {rule.executionKind === "modelPlanned"
-                                    ? "model planned"
-                                    : "deterministic"}
-                                </span>
-                                <span>{formatToken(rule.safetyLevel)}</span>
-                                <span>{formatToken(rule.allowedWrites)}</span>
-                              </span>
-                              <small>{rule.description}</small>
-                            </div>
-                          )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="segmented" aria-label="Test file mode">
-              <button
-                type="button"
-                className={testFileMode === "readOnly" ? "active" : ""}
-                onClick={() => setTestFileMode("readOnly")}
-              >
-                <Shield size={16} />
-                Tests read-only
-              </button>
-              <button
-                type="button"
-                className={testFileMode === "mutable" ? "active" : ""}
-                onClick={() => setTestFileMode("mutable")}
-              >
-                <FileDiff size={16} />
-                Tests mutable
-              </button>
-            </div>
-
-            <label>
-              Validation commands
-              <textarea
-                value={validationCommands}
-                onChange={(event) => setValidationCommands(event.target.value)}
-                placeholder="bun test&#10;bun run typecheck&#10;cargo check --all-targets&#10;cargo clippy --all-targets -- -D warnings"
-              />
-            </label>
-
-            <label>
-              Protected paths
-              <textarea
-                value={protectedPaths}
-                onChange={(event) => setProtectedPaths(event.target.value)}
-              />
-            </label>
-
-            <section className="candidate-preview-shell">
-              {candidateFilePreviewLoading && (
-                <p className="empty">Previewing candidate files.</p>
-              )}
-              {candidateFilePreviewError && (
-                <small className="field-error">{candidateFilePreviewError}</small>
-              )}
-              {candidateFilePreview && renderCandidateFilePreview(candidateFilePreview)}
-              {!candidateFilePreviewLoading &&
-                !candidateFilePreviewError &&
-                !candidateFilePreview && (
-                  <p className="empty">Candidate files appear after selecting a repository.</p>
-                )}
-            </section>
-
-            <button className="primary" type="submit" disabled={startRunDisabled}>
-              <Play size={18} />
-              Start run
-            </button>
-          </form>
+              </>
+            }
+          />
 
           {pendingRunDraft && (
-            <section className="run-review">
-              <div className="run-review-title">
-                <Shield size={17} />
-                <h3>Review run</h3>
-              </div>
-              <dl className="metadata compact-metadata">
-                <div>
-                  <dt>Repository</dt>
-                  <dd>{pendingRunDraft.repositoryLabel}</dd>
-                </div>
-                <div>
-                  <dt>Mutable scope</dt>
-                  <dd>{pendingRunDraft.targetLabel}</dd>
-                </div>
-                <div>
-                  <dt>Model</dt>
-                  <dd>{pendingRunDraft.modelLabel}</dd>
-                </div>
-                <div>
-                  <dt>Tests</dt>
-                  <dd>{pendingRunDraft.testFileMode}</dd>
-                </div>
-              </dl>
-              {renderCandidateFilePreview(pendingRunDraft.candidateFilePreview, {
-                interactive: false,
-              })}
-              <div className="settings-grid">
-                <section>
-                  <h4>{pendingRunDraft.mode === "automatic" ? "Rule selection plan" : "Rules"}</h4>
-                  {pendingRunDraft.mode === "automatic" && pendingRunDraft.ruleSelectionPlan ? (
-                    <div className="rule-plan compact-plan">
-                      {pendingRunDraft.ruleSelectionPlan.segments.map((segment) => (
-                        <article className="rule-segment" key={segment.relativePath || "."}>
-                          <div className="rule-segment-title">
-                            <strong>
-                              {segment.relativePath === ""
-                                ? "Repository root"
-                                : segment.relativePath}
-                            </strong>
-                            <span>{segment.rules.length} rules</span>
-                          </div>
-                          <p>{segment.rules.map((ruleId) => ruleName(ruleId, rules)).join(", ")}</p>
-                          {ruleRecords(segment.rules, rules).map((rule) => (
-                            <span className="rule-preserves" key={rule.id}>
-                              Preserves {rule.preserves.map(formatToken).join(", ")}
-                            </span>
-                          ))}
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <ul className="rule-summary-list">
-                      {pendingRunDraft.ruleSummaries.map((rule) => (
-                        <li key={rule.id}>
-                          <strong>{rule.name}</strong>
-                          <span className="rule-metadata">
-                            <span>{languageLabel(rule.language)}</span>
-                            <span>
-                              {rule.executionKind === "modelPlanned"
-                                ? "model planned"
-                                : "deterministic"}
-                            </span>
-                            <span>{formatToken(rule.safetyLevel)}</span>
-                            <span>{formatToken(rule.allowedWrites)}</span>
-                          </span>
-                          <span className="rule-preserves">
-                            Preserves {rule.preserves.map(formatToken).join(", ")}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-                <section>
-                  <h4>Protected paths</h4>
-                  {pendingRunDraft.protectedPaths.length > 0 ? (
-                    <ul>
-                      {pendingRunDraft.protectedPaths.map((path) => (
-                        <li key={path}>{path}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="empty">No custom protected paths.</p>
-                  )}
-                </section>
-              </div>
-              <section className="trust-check">
-                <h4>Local execution</h4>
-                {pendingRunDraft.validationCommands.length > 0 ? (
-                  <ul>
-                    {pendingRunDraft.validationCommands.map((command) => (
-                      <li key={command}>{command}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>No custom validation commands were entered.</p>
-                )}
-                {(pendingRunDraft.validationCommands.length > 0 ||
-                  pendingRunDraft.usesModelPlannedRules) && (
-                  <p>
-                    Confirm only for repositories and commands you trust; validation runs on this
-                    machine through the local shell.
-                  </p>
-                )}
-              </section>
-              <div className="review-actions">
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => setPendingRunDraft(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="primary"
-                  type="button"
-                  onClick={() => confirmPendingRun().catch((error) => setMessage(error.message))}
-                >
-                  <Play size={18} />
-                  Confirm and start run
-                </button>
-              </div>
-            </section>
+            <RunReviewPanel
+              draft={pendingRunDraft}
+              rules={rules}
+              onCancel={() => setPendingRunDraft(null)}
+              onConfirm={() => confirmPendingRun().catch((error) => setMessage(error.message))}
+            />
           )}
 
           <div className="runs-layout">
-            <section className="history">
-              <div className="history-title">
-                <h3>History</h3>
-                <div className="segmented compact" aria-label="Run history scope">
-                  <button
-                    type="button"
-                    className={runHistoryScope === "repository" ? "active" : ""}
-                    onClick={() => setRunHistoryScope("repository")}
-                    disabled={!selectedRepositoryId}
-                  >
-                    Repository
-                  </button>
-                  <button
-                    type="button"
-                    className={runHistoryScope === "all" ? "active" : ""}
-                    onClick={() => setRunHistoryScope("all")}
-                  >
-                    All
-                  </button>
-                </div>
-              </div>
-              <div className="run-list">
-                {runs.map((run) => (
-                  <button
-                    key={run.id}
-                    className={run.id === selectedRun?.id ? "run-row selected" : "run-row"}
-                    onClick={() => setSelectedRunId(run.id)}
-                  >
-                    <span className={`status ${run.status}`}>{run.status}</span>
-                    <span className="path">{runTargetLabel(run)}</span>
-                    {run.model && <span className="run-model">{run.model}</span>}
-                    <span className="run-repository">{repositoryLabel(run, repositories)}</span>
-                    <span className="time">{new Date(run.updatedAt).toLocaleString()}</span>
-                  </button>
-                ))}
-                {runs.length === 0 && (
-                  <p className="empty">
-                    {runHistoryScope === "repository"
-                      ? "No runs for this repository."
-                      : "No stored runs."}
-                  </p>
-                )}
-              </div>
-            </section>
+            <RunHistory
+              runs={runs}
+              repositories={repositories}
+              selectedRun={selectedRun}
+              runHistoryScope={runHistoryScope}
+              selectedRepositoryId={selectedRepositoryId}
+              onSetRunHistoryScope={setRunHistoryScope}
+              onSelectRun={setSelectedRunId}
+            />
 
-            <section className="detail">
-              <div className="detail-title">
-                <h3>Detail</h3>
-                {selectedRun && (
-                  <button className="secondary" onClick={revertSelectedRun}>
-                    <RotateCcw size={16} />
-                    Revert
-                  </button>
-                )}
-              </div>
-
-              {selectedRun ? (
-                <>
-                  <dl className="metadata">
-                    <div>
-                      <dt>Status</dt>
-                      <dd>{selectedRun.status}</dd>
-                    </div>
-                    <div>
-                      <dt>Rules</dt>
-                      <dd>{selectedRun.rules.join(", ") || "default"}</dd>
-                    </div>
-                    <div>
-                      <dt>Model</dt>
-                      <dd>{selectedRun.model ?? "default"}</dd>
-                    </div>
-                    <div>
-                      <dt>Tests</dt>
-                      <dd>{selectedRun.testFileMode}</dd>
-                    </div>
-                    <div>
-                      <dt>Target</dt>
-                      <dd>{runTargetLabel(selectedRun)}</dd>
-                    </div>
-                    <div>
-                      <dt>Repository</dt>
-                      <dd>{repositoryLabel(selectedRun, repositories)}</dd>
-                    </div>
-                    <div>
-                      <dt>Created</dt>
-                      <dd>{new Date(selectedRun.createdAt).toLocaleString()}</dd>
-                    </div>
-                    <div>
-                      <dt>Updated</dt>
-                      <dd>{new Date(selectedRun.updatedAt).toLocaleString()}</dd>
-                    </div>
-                  </dl>
-
-                  <div className="settings-grid">
-                    {selectedRun.ruleSelectionPlan && (
-                      <section>
-                        <h4>Rule selection plan</h4>
-                        <div className="rule-plan compact-plan">
-                          {selectedRun.ruleSelectionPlan.segments.map((segment) => (
-                            <article className="rule-segment" key={segment.relativePath || "."}>
-                              <div className="rule-segment-title">
-                                <strong>
-                                  {segment.relativePath === ""
-                                    ? "Repository root"
-                                    : segment.relativePath}
-                                </strong>
-                                <span>{segment.rules.length} rules</span>
-                              </div>
-                              <p>{segment.rules.map((ruleId) => ruleName(ruleId, rules)).join(", ")}</p>
-                            </article>
-                          ))}
-                        </div>
-                      </section>
-                    )}
-                    <section>
-                      <h4>Validation commands</h4>
-                      {selectedRun.validationCommands.length > 0 ? (
-                        <ul>
-                          {selectedRun.validationCommands.map((command) => (
-                            <li key={command}>{command}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="empty">No validation commands recorded.</p>
-                      )}
-                    </section>
-                    <section>
-                      <h4>Protected paths</h4>
-                      {selectedRun.protectedPaths.length > 0 ? (
-                        <ul>
-                          {selectedRun.protectedPaths.map((path) => (
-                            <li key={path}>{path}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="empty">No protected paths recorded.</p>
-                      )}
-                    </section>
-                  </div>
-
-                  {selectedRun.validationOutput && (
-                    <pre className="log">{selectedRun.validationOutput}</pre>
-                  )}
-                  {selectedRun.error && (
-                    <section className="run-error">
-                      <h4>Run error</h4>
-                      <pre>{selectedRun.error}</pre>
-                    </section>
-                  )}
-
-                  {downloadProgress && (
-                    <div className="download-progress">
-                      <div>
-                        <span>{downloadProgress.label}</span>
-                        <strong>{downloadProgress.percent}%</strong>
-                      </div>
-                      <progress value={downloadProgress.percent} max={100} />
-                    </div>
-                  )}
-
-                  {selectedRunEvents.length > 0 && (
-                    <ol className="event-log">
-                      {selectedRunEvents.map((event) => (
-                        <li key={event.id}>
-                          <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
-                          <span>{event.message}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-
-                  <div className="diff-stack">
-                    {selectedRunReview?.diff.files.map((file) => (
-                      <article className="diff-file" key={file.filePath}>
-                        <h3>{file.filePath}</h3>
-                        {(file.ruleId || file.summary) && (
-                          <div className="diff-summary">
-                            {file.ruleId && <span>{file.ruleId}</span>}
-                            {file.summary && <p>{file.summary}</p>}
-                          </div>
-                        )}
-                        <pre>{file.diff}</pre>
-                      </article>
-                    ))}
-                    {selectedRunReview?.diff.files.length === 0 && (
-                      <p className="empty">No file changes recorded.</p>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p className="empty">Select a run to inspect.</p>
-              )}
-            </section>
+            <RunDetail
+              selectedRun={selectedRun}
+              repositories={repositories}
+              selectedRunReview={selectedRunReview}
+              selectedRunEvents={selectedRunEvents}
+              downloadProgress={downloadProgress}
+              rules={rules}
+              onRevert={() => revertSelectedRun().catch((error) => setMessage(error.message))}
+            />
           </div>
-        </section>
+        </RunsPanelShell>
       </section>
     </main>
   );
-}
-
-function lines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function languageLabel(language: Rule["language"]): string {
-  return language === "rust" ? "Rust" : "TypeScript";
-}
-
-function flattenedPlanRules(plan: RuleSelectionPlan): string[] {
-  return [...new Set(plan.segments.flatMap((segment) => segment.rules))].sort();
-}
-
-function ruleRecords(ruleIds: string[], rules: Rule[]): Rule[] {
-  return ruleIds
-    .map((ruleId) => rules.find((rule) => rule.id === ruleId))
-    .filter((rule): rule is Rule => Boolean(rule));
-}
-
-function ruleName(ruleId: string, rules: Rule[]): string {
-  return rules.find((rule) => rule.id === ruleId)?.name ?? ruleId;
-}
-
-function formatToken(value: string): string {
-  return value
-    .split("-")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function runTargetLabel(run: RunRecord): string {
-  if (run.targetRelativePath && run.targetRelativePath !== ROOT_PATH) {
-    return run.targetRelativePath;
-  }
-  if (run.targetRelativePath === ROOT_PATH) {
-    return "Repository root";
-  }
-  return run.targetPath;
-}
-
-function repositoryLabel(run: RunRecord, repositories: RepositoryRecord[]): string {
-  const repository = repositories.find((item) => item.id === run.repositoryId);
-  if (repository) return repository.label;
-  return run.repositoryRootPath ?? run.targetPath;
-}
-
-function appendUniqueRunEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
-  if (events.some((existing) => existing.id === event.id)) return events;
-  return [...events, event].sort((left, right) => left.id - right.id);
-}
-
-function latestDownloadProgress(events: RunEvent[]): { label: string; percent: number } | null {
-  for (const event of [...events].reverse()) {
-    const match = event.message.match(/^(Downloading .+): (\d+)%/);
-    if (!match) continue;
-    return {
-      label: match[1],
-      percent: Math.min(100, Number(match[2])),
-    };
-  }
-  return null;
-}
-
-function repositoryFilePath(repositoryRootPath: string, relativePath: string): string {
-  const root = repositoryRootPath.replace(/[\\/]+$/, "");
-  return `${root}/${relativePath}`;
-}
-
-function pathsEndWithSameFile(absolutePath: string, relativePath: string): boolean {
-  const normalizedAbsolute = absolutePath.replaceAll("\\", "/");
-  const normalizedRelative = relativePath.replaceAll("\\", "/");
-  return (
-    normalizedAbsolute === normalizedRelative ||
-    normalizedAbsolute.endsWith(`/${normalizedRelative}`)
-  );
-}
-
-function changedLineNumbers(originalContent: string, newContent: string): number[] {
-  const originalLines = originalContent.split("\n");
-  const newLines = newContent.split("\n");
-  const commonSubsequence = longestCommonLineSubsequence(originalLines, newLines);
-  const unchangedOriginalLines = new Set(commonSubsequence.map(([originalIndex]) => originalIndex));
-  const changedLines: number[] = [];
-
-  for (let index = 0; index < originalLines.length; index += 1) {
-    if (!unchangedOriginalLines.has(index)) {
-      changedLines.push(index + 1);
-    }
-  }
-
-  if (changedLines.length === 0 && originalContent !== newContent) {
-    return [Math.max(1, originalLines.length)];
-  }
-
-  return changedLines;
-}
-
-function longestCommonLineSubsequence(
-  left: string[],
-  right: string[],
-): Array<[number, number]> {
-  const table = Array.from({ length: left.length + 1 }, () =>
-    Array<number>(right.length + 1).fill(0),
-  );
-
-  for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex -= 1) {
-    for (let rightIndex = right.length - 1; rightIndex >= 0; rightIndex -= 1) {
-      table[leftIndex][rightIndex] =
-        left[leftIndex] === right[rightIndex]
-          ? table[leftIndex + 1][rightIndex + 1] + 1
-          : Math.max(table[leftIndex + 1][rightIndex], table[leftIndex][rightIndex + 1]);
-    }
-  }
-
-  const pairs: Array<[number, number]> = [];
-  let leftIndex = 0;
-  let rightIndex = 0;
-  while (leftIndex < left.length && rightIndex < right.length) {
-    if (left[leftIndex] === right[rightIndex]) {
-      pairs.push([leftIndex, rightIndex]);
-      leftIndex += 1;
-      rightIndex += 1;
-    } else if (table[leftIndex + 1][rightIndex] >= table[leftIndex][rightIndex + 1]) {
-      leftIndex += 1;
-    } else {
-      rightIndex += 1;
-    }
-  }
-
-  return pairs;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KiB`;
-}
-
-type ChangePreviewSummaryProps = {
-  edit: AnalyzerEdit | null;
-  loading: boolean;
-  error: string;
-  unavailable: boolean;
-};
-
-function ChangePreviewSummary({
-  edit,
-  loading,
-  error,
-  unavailable,
-}: ChangePreviewSummaryProps) {
-  if (loading) {
-    return <p className="change-preview-note">Checking deterministic edits.</p>;
-  }
-  if (error) {
-    return <p className="change-preview-error">{error}</p>;
-  }
-  if (unavailable) {
-    return <p className="change-preview-note">No deterministic edit preview available.</p>;
-  }
-  if (!edit) {
-    return <p className="change-preview-note">No deterministic edits found.</p>;
-  }
-
-  return (
-    <p className="change-preview-note strong">
-      Would change {changedLineNumbers(edit.originalContent, edit.newContent).length} lines:{" "}
-      {edit.summary}
-    </p>
-  );
-}
-
-type CodePreviewProps = {
-  content: string;
-  highlightedLines: number[];
-  language: RepositoryFilePreviewResponse["language"];
-  path: string;
-};
-
-function CodePreview({ content, highlightedLines, language, path }: CodePreviewProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const highlightedLineSet = new Set(highlightedLines);
-
-    const extensions: Extension[] = [
-      lineNumbers(),
-      EditorState.readOnly.of(true),
-      EditorView.editable.of(false),
-      EditorView.lineWrapping,
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      EditorView.decorations.compute([], (state) => {
-        const lineDecoration = Decoration.line({ class: "cm-change-preview-line" });
-        const ranges = [...highlightedLineSet]
-          .filter((lineNumber) => lineNumber >= 1 && lineNumber <= state.doc.lines)
-          .map((lineNumber) => lineDecoration.range(state.doc.line(lineNumber).from));
-        return Decoration.set(ranges, true);
-      }),
-    ];
-
-    if (language === "typescript") {
-      extensions.push(
-        javascript({
-          typescript: true,
-          jsx: path.endsWith(".tsx") || path.endsWith(".jsx"),
-        }),
-      );
-    }
-    if (language === "rust") {
-      extensions.push(rust());
-    }
-
-    const view = new EditorView({
-      parent: containerRef.current,
-      state: EditorState.create({
-        doc: content,
-        extensions,
-      }),
-    });
-
-    return () => view.destroy();
-  }, [content, highlightedLines, language, path]);
-
-  return <div className="code-preview" ref={containerRef} />;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

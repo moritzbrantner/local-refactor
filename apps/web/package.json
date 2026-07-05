@@ -6,7 +6,11 @@
     "dev": "vite --host 127.0.0.1 --port 5173",
     "dev:test": "vite --host 127.0.0.1 --port 4173",
     "build": "tsc -b && vite build",
-    "test:e2e": "playwright test"
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:e2e": "playwright test",
+    "storybook": "storybook dev -p 6006 --host 127.0.0.1",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",
@@ -22,8 +26,14 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@storybook/react-vite": "^10.4.6",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "typescript": "^5.7.2"
+    "jsdom": "^29.1.1",
+    "storybook": "^10.4.6",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.9"
   }
 }
