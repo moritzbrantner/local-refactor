@@ -1,34 +1,97 @@
 name: Check
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deterministic:
-    name: Deterministic checks
+  workflow-lint:
+    name: Workflow Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - name: Run actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color .github/workflows/*.yml
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+  fast-validation:
+    name: Fast Validation
+    permissions:
+      contents: read
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/fast-validation.yml@workflow-standard-v1.3
+    with:
+      node_version: ""
+      pre_command: |
+        if ! command -v rustup >/dev/null 2>&1; then
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        rustup toolchain install stable --profile minimal --component clippy
+        rustup default stable
+      lint_command: cargo clippy --workspace --all-targets -- -D warnings
+      unit_test_command: cargo test --workspace -- --test-threads=1
+      cache_cargo: true
+      cargo_cache_dependency_path: Cargo.lock
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+  integration-validation:
+    name: Integration Validation
+    permissions:
+      contents: read
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/integration-validation.yml@workflow-standard-v1.3
+    with:
+      node_version: ""
+      integration_command: |
+        bun run check:catalog
+        bun run --cwd workers/typescript-analyzer test
+      bun_cache_dependency_path: bun.lock
 
-      - name: Install Playwright browser
-        run: bunx playwright install --with-deps chromium
+  benchmark-report-validation:
+    name: Benchmark Report Validation
+    permissions:
+      contents: read
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/performance-validation.yml@workflow-standard-v1.3
+    with:
+      node_version: ""
+      benchmark_command: bun run test:benchmarks
+      bun_cache_dependency_path: bun.lock
+      artifact_paths: benchmark-results
+      upload_artifacts_on: failure
 
-      - name: Run deterministic check suite
-        run: bun run check
-
-      - name: Run strict clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+  e2e-validation:
+    name: E2E Validation
+    needs:
+      - workflow-lint
+      - fast-validation
+      - integration-validation
+      - benchmark-report-validation
+    permissions:
+      contents: read
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@workflow-standard-v1.3
+    with:
+      node_version: ""
+      build_command: bun run --cwd apps/web build
+      e2e_command: bun run --cwd apps/web test:e2e
+      install_playwright: true
+      install_playwright_browsers: chromium
+      artifact_paths: |
+        apps/web/playwright-report
+        apps/web/test-results
+      upload_artifacts_on: failure
+      bun_cache_dependency_path: bun.lock
