@@ -1,0 +1,11 @@
+{
+  "act": true,
+  "pull_request": {
+    "base": {
+      "ref": "main"
+    },
+    "head": {
+      "ref": "agent-loop/issue-2-adopt-reusable-workflow-validation-contracts"
+    }
+  }
+}

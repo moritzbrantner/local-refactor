@@ -1,0 +1,39 @@
+{
+  "baseRef": null,
+  "event": "pull_request",
+  "finishedAt": "2026-07-06T23:07:35Z",
+  "headRef": "agent-loop/issue-2-adopt-reusable-workflow-validation-contracts",
+  "headSha": "03570be39c2063f1204f69602c0c97358a657e45",
+  "outcome": "workflow-failed",
+  "path": "/home/moenarch/moritzbrantner/local-refactor/.agent-loop/local-actions/runs/20260706-230600-536177-pull_request.json",
+  "reasons": [
+    "time=\"2026-07-07T01:06:00+02:00\" level=info msg=\"Using docker host 'unix:///var/run/docker.sock', and daemon socket 'unix:///var/run/docker.sock'\" Error: Job 'Fast Validation' failed"
+  ],
+  "repoRoot": "/home/moenarch/moritzbrantner/local-refactor",
+  "runId": "20260706-230600-536177-pull_request",
+  "runner": "act",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-06T23:06:00Z",
+  "workflowCount": 1,
+  "workflowResults": [
+    {
+      "exitCode": 1,
+      "name": "Check",
+      "outcome": "workflow-failed",
+      "relativePath": ".github/workflows/check.yml",
+      "summary": "time=\"2026-07-07T01:06:00+02:00\" level=info msg=\"Using docker host 'unix:///var/run/docker.sock', and daemon socket 'unix:///var/run/docker.sock'\" Error: Job 'Fast Validation' failed"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "Check",
+      "relativePath": ".github/workflows/check.yml",
+      "sha256": "1ebecd941411973136e6b0be9e3aab5bb82022fd203022ac92ffe187e7055ac9",
+      "triggers": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ]
+    }
+  ]
+}

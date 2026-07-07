@@ -1,0 +1,21 @@
+{
+  "baselineEstimatedTokens": 230,
+  "diagnosticsFailures": 0,
+  "estimatedSavingsPercent": 0.0,
+  "estimatedTokensObserved": 230,
+  "estimatedTokensSaved": 0,
+  "eventsLogged": 18,
+  "lastCycle": 1,
+  "lastEventId": "79caf264-8016-466b-9de8-c57e25855fd8",
+  "lastEventType": "run_stopped",
+  "lastStatus": "queue-empty",
+  "latestReportPath": "/home/moenarch/moritzbrantner/local-refactor/.agent-loop/diagnostics/reports/20260706-225351-moritzbrantner-local-refactor-summary-last-50.md",
+  "ok": true,
+  "path": "/home/moenarch/moritzbrantner/local-refactor/.agent-loop/diagnostics/runs/20260706-225351-moritzbrantner-local-refactor.jsonl",
+  "repo": "moritzbrantner/local-refactor",
+  "resumed": false,
+  "runId": "20260706-225351-moritzbrantner-local-refactor",
+  "startedAt": "2026-07-06T22:53:51Z",
+  "tokenEstimatesLogged": 2,
+  "updatedAt": "2026-07-07T00:04:11Z"
+}

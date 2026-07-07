@@ -1,0 +1,39 @@
+{
+  "baseRef": null,
+  "event": "pull_request",
+  "finishedAt": "2026-07-06T23:20:09Z",
+  "headRef": "agent-loop/issue-2-adopt-reusable-workflow-validation-contracts",
+  "headSha": "03570be39c2063f1204f69602c0c97358a657e45",
+  "outcome": "workflow-failed",
+  "path": "/home/moenarch/moritzbrantner/local-refactor/.agent-loop/local-actions/runs/20260706-231952-665043-pull_request.json",
+  "reasons": [
+    "time=\"2026-07-07T01:19:52+02:00\" level=info msg=\"Using docker host 'unix:///var/run/docker.sock', and daemon socket 'unix:///var/run/docker.sock'\" Error: Job 'Integration Validation' failed"
+  ],
+  "repoRoot": "/home/moenarch/moritzbrantner/local-refactor",
+  "runId": "20260706-231952-665043-pull_request",
+  "runner": "act",
+  "schemaVersion": 1,
+  "startedAt": "2026-07-06T23:19:52Z",
+  "workflowCount": 1,
+  "workflowResults": [
+    {
+      "exitCode": 1,
+      "name": "Check",
+      "outcome": "workflow-failed",
+      "relativePath": ".github/workflows/check.yml",
+      "summary": "time=\"2026-07-07T01:19:52+02:00\" level=info msg=\"Using docker host 'unix:///var/run/docker.sock', and daemon socket 'unix:///var/run/docker.sock'\" Error: Job 'Integration Validation' failed"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "Check",
+      "relativePath": ".github/workflows/check.yml",
+      "sha256": "7bf895a102e85b7093b73cb0d427cc422c530103d7fecba407cdd3b0d5186d9b",
+      "triggers": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ]
+    }
+  ]
+}
