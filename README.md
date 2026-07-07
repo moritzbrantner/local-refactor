@@ -8,7 +8,7 @@ local-refactor is a localhost-only refactoring service with a browser UI. The cu
 - TypeScript analyzer worker run through Bun
 - model-planned TypeScript and Rust refactoring rules
 - Ollama-backed local coding model selection at `/api/models`
-- deterministic `simplify-conditional` refactor rule
+- deterministic TypeScript refactoring preview and apply without an LLM
 
 ## Requirements
 
@@ -46,13 +46,23 @@ In the browser UI:
 2. Select the repository.
 3. Select the repository root or a subfolder as the Target Folder.
 4. Select the local coding model and configure rules, test file mode, validation commands, and protected paths.
-5. Start the run.
+5. For deterministic-only TypeScript rule selections, preview the concrete diffs and apply them.
+6. For model-planned or mixed rule selections, start the model-backed run.
 
 By default, files under the selected Target Folder are mutable, tests are read-only, parent/sibling paths are read-only, and common build outputs/lockfiles are protected. Repository Sources are only local-refactor list entries; removing one from the UI does not delete files or existing run history.
 
 The backend still accepts a legacy absolute `targetPath` for direct API callers. Runs created through the browser UI submit `repositoryId` and `targetRelativePath`, and the service stores both that repository context and the resolved absolute target path.
 
-The implemented deterministic TypeScript rule is `simplify-conditional`, which rewrites simple boolean-return conditionals such as:
+Deterministic TypeScript rules can be previewed before they are applied. A
+Candidate File Preview shows eligible files only; it does not predict edits. A
+Deterministic Preview runs the deterministic analyzer against the current run
+settings and returns actual diffs. Applying a Deterministic Preview recomputes
+the same preview on the server, verifies its fingerprint, creates a normal Run,
+writes through the patch journal, runs validation, and supports the same review
+and revert flow as any other Run. This path does not require Ollama or model
+availability.
+
+The implemented deterministic TypeScript rules include `simplify-conditional`, which rewrites simple boolean-return conditionals such as:
 
 ```ts
 if (value) {
@@ -136,6 +146,21 @@ POST /api/rule-selection/plan
   "protectedPaths": ["src/generated/**"]
 }
 ```
+
+Preview deterministic edits for deterministic-only TypeScript rules:
+
+```http
+POST /api/runs/deterministic-preview
+```
+
+Apply a reviewed deterministic preview:
+
+```http
+POST /api/runs/deterministic-preview/apply
+```
+
+Model-planned or mixed rule selections use the existing `/api/runs` flow and
+local model selection.
 
 ## Check
 

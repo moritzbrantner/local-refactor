@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import { deterministicRules } from "./rules";
 
 type AnalyzerRequest = {
-  files: string[];
+  files: AnalyzerSourceFile[];
   rules: string[];
 };
+
+type AnalyzerSourceFile = string | { filePath: string; content: string };
 
 type AnalyzerEdit = {
   filePath: string;
@@ -53,9 +55,11 @@ export function plan(request: AnalyzerRequest): AnalyzerResponse {
     skipAddingFilesFromTsConfig: true,
   });
 
-  for (const file of request.files) {
+  for (const input of request.files) {
+    const file = typeof input === "string" ? input : input.filePath;
     try {
-      const originalContent = readFileSync(file, "utf8");
+      const originalContent =
+        typeof input === "string" ? readFileSync(file, "utf8") : input.content;
       const sourceFile = project.createSourceFile(file, originalContent, {
         overwrite: true,
       });

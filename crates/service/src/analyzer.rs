@@ -9,8 +9,19 @@ use tokio::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzerRequest {
-    pub files: Vec<String>,
+    pub files: Vec<AnalyzerSourceFile>,
     pub rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged, rename_all = "camelCase")]
+pub enum AnalyzerSourceFile {
+    Path(String),
+    Content {
+        #[serde(rename = "filePath")]
+        file_path: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

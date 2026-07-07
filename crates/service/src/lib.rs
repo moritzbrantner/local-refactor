@@ -1,5 +1,6 @@
 mod analyzer;
 mod db;
+mod deterministic_preview;
 mod diff;
 mod edit_journal;
 mod model_provider;
@@ -11,6 +12,7 @@ mod run_status;
 mod validation;
 
 use analyzer::AnalyzerRequest;
+use analyzer::AnalyzerSourceFile;
 use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path as AxumPath, Query, State},
@@ -148,6 +150,8 @@ pub struct RunCreateRequest {
     protected_paths: Vec<String>,
     #[serde(default = "default_repair_budget")]
     repair_budget: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_deterministic_preview_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,6 +161,13 @@ struct CandidateFilePreviewRequest {
     run: RunCreateRequest,
     #[serde(default)]
     limit_per_group: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeterministicPreviewApplyRequest {
+    run: RunCreateRequest,
+    preview_fingerprint: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,6 +352,14 @@ pub fn router(state: ServiceState) -> Router {
         )
         .route("/api/analyze", post(analyze))
         .route("/api/runs", post(create_run).get(list_runs))
+        .route(
+            "/api/runs/deterministic-preview",
+            post(deterministic_preview),
+        )
+        .route(
+            "/api/runs/deterministic-preview/apply",
+            post(apply_deterministic_preview),
+        )
         .route(
             "/api/runs/candidate-file-preview",
             post(candidate_file_preview),
@@ -626,7 +645,11 @@ async fn analyze(
         (
             prepared.0,
             AnalyzerRequest {
-                files: prepared.1,
+                files: prepared
+                    .1
+                    .into_iter()
+                    .map(AnalyzerSourceFile::Path)
+                    .collect(),
                 rules: analyzer_rules,
             },
         )
@@ -643,6 +666,91 @@ async fn analyze(
         }
         Err(error) => (
             StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn deterministic_preview(
+    State(state): State<ServiceState>,
+    Json(request): Json<RunCreateRequest>,
+) -> impl IntoResponse {
+    let request = match normalize_request(&state.db, request) {
+        Ok(request) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    match deterministic_preview::plan(&state.analyzer_script, &request).await {
+        Ok(plan) => Json(plan.response).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn apply_deterministic_preview(
+    State(state): State<ServiceState>,
+    Json(request): Json<DeterministicPreviewApplyRequest>,
+) -> impl IntoResponse {
+    let mut run = match normalize_request(&state.db, request.run) {
+        Ok(request) => request,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    let plan = match deterministic_preview::plan(&state.analyzer_script, &run).await {
+        Ok(plan) => plan,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response()
+        }
+    };
+    if let Err(error) =
+        deterministic_preview::validate_fingerprint(&plan, Some(&request.preview_fingerprint))
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+
+    let id = Uuid::new_v4().to_string();
+    run.expected_deterministic_preview_fingerprint = Some(request.preview_fingerprint);
+    match state.db.insert_run(&id, &run) {
+        Ok(()) => {
+            let state_for_job = state.clone();
+            let id_for_job = id.clone();
+            let cancellation = state.cancellations.register(&id);
+            tokio::spawn(async move {
+                if let Err(error) =
+                    run_executor::run_job(state_for_job, id_for_job.clone(), run, cancellation)
+                        .await
+                {
+                    tracing::error!(run_id = id_for_job, error = %error, "run failed");
+                }
+            });
+            (StatusCode::ACCEPTED, Json(RunCreatedResponse { id })).into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
@@ -1325,6 +1433,7 @@ mod tests {
             validation_commands: Vec::new(),
             protected_paths: Vec::new(),
             repair_budget: 2,
+            expected_deterministic_preview_fingerprint: None,
         }
     }
 
@@ -1410,6 +1519,7 @@ mod tests {
             validation_commands: Vec::new(),
             protected_paths: Vec::new(),
             repair_budget: 2,
+            expected_deterministic_preview_fingerprint: None,
         };
         db.insert_run("run-1", &request).unwrap();
 
@@ -1444,6 +1554,7 @@ mod tests {
                 validation_commands: Vec::new(),
                 protected_paths: Vec::new(),
                 repair_budget: 2,
+                expected_deterministic_preview_fingerprint: None,
             },
         )
         .unwrap();
@@ -1466,14 +1577,8 @@ mod tests {
             )
         );
         assert_eq!(run.target_relative_path.as_deref(), Some("src"));
-        assert_eq!(
-            request.model.as_deref(),
-            Some(model_provider::default_model_name())
-        );
-        assert_eq!(
-            run.model.as_deref(),
-            Some(model_provider::default_model_name())
-        );
+        assert_eq!(request.model.as_deref(), None);
+        assert_eq!(run.model.as_deref(), None);
     }
 
     #[test]
@@ -1537,13 +1642,14 @@ validationCommands = ["echo default validation"]
                 repository_id: None,
                 repository_root_path: None,
                 target_relative_path: None,
-                rules: Vec::new(),
+                rules: vec!["add-documentation-comments".to_string()],
                 rule_selection_plan: None,
                 model: Some("unknown-model:latest".to_string()),
                 test_file_mode: None,
                 validation_commands: Vec::new(),
                 protected_paths: Vec::new(),
                 repair_budget: 2,
+                expected_deterministic_preview_fingerprint: None,
             },
         )
         .unwrap_err();

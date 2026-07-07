@@ -36,6 +36,10 @@ _Avoid_: Child run, mini job
 A pre-run summary of source files eligible to be modified by the selected Run settings, grouped by rule and/or Rule Selection Segment. Candidate files are not guaranteed edits.
 _Avoid_: Affected files, predicted edits, dry-run diff
 
+**Deterministic Preview**:
+A side-effect-free, whole-run preview of concrete edits produced by deterministic Refactoring Rules for the current run settings. A Deterministic Preview contains real diffs, but it is not a Run until applied.
+_Avoid_: Candidate File Preview, dry run, predicted edits
+
 **Selection Evidence**:
 A recorded reason explaining why a Refactoring Rule was selected, such as config inheritance, source-file shape, language fallback, or folder markers.
 _Avoid_: Heuristic log

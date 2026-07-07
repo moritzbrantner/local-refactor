@@ -29,12 +29,13 @@ import {
   RunReviewPanel,
   RunsPanelShell,
 } from "./components/panels";
-import { CandidateFilePreview } from "./components/previews";
+import { CandidateFilePreview, DeterministicPreviewPanel } from "./components/previews";
 import "./styles.css";
 import type {
   AnalyzerEdit,
   AnalyzerResponse,
   CandidateFilePreviewResponse,
+  DeterministicPreviewResponse,
   FolderChildrenResponse,
   FolderEntry,
   ModelsResponse,
@@ -110,6 +111,11 @@ function App() {
   const [validationCommands, setValidationCommands] = useState("");
   const [protectedPaths, setProtectedPaths] = useState("src/generated/**");
   const [pendingRunDraft, setPendingRunDraft] = useState<RunDraft | null>(null);
+  const [deterministicPreview, setDeterministicPreview] =
+    useState<DeterministicPreviewResponse | null>(null);
+  const [deterministicPreviewLoading, setDeterministicPreviewLoading] = useState(false);
+  const [deterministicPreviewApplying, setDeterministicPreviewApplying] = useState(false);
+  const [deterministicPreviewError, setDeterministicPreviewError] = useState("");
   const [message, setMessage] = useState("");
   const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(false);
   const [foldersCollapsed, setFoldersCollapsed] = useState(false);
@@ -139,6 +145,24 @@ function App() {
     [selectedRunEvents],
   );
 
+  const effectiveRuleIds = useMemo(() => {
+    if (ruleMode === "manual") return selectedRules;
+    return ruleSelectionPlan ? flattenedPlanRules(ruleSelectionPlan) : [];
+  }, [ruleMode, selectedRules, ruleSelectionPlan]);
+
+  const effectiveRuleRecords = useMemo(
+    () => ruleRecords(effectiveRuleIds, rules),
+    [effectiveRuleIds, rules],
+  );
+
+  const usesModelPlannedRules = effectiveRuleRecords.some(
+    (rule) => rule.executionKind === "modelPlanned",
+  );
+  const canUseDeterministicPreview =
+    effectiveRuleIds.length > 0 &&
+    effectiveRuleRecords.length === effectiveRuleIds.length &&
+    !usesModelPlannedRules;
+
   const ruleSelectionLoading =
     ruleMode === "automatic" && !ruleSelectionPlan && !ruleSelectionError;
   const startRunDisabled =
@@ -147,7 +171,9 @@ function App() {
     (ruleMode === "automatic" && Boolean(ruleSelectionError)) ||
     candidateFilePreviewLoading ||
     Boolean(candidateFilePreviewError) ||
-    !candidateFilePreview;
+    !candidateFilePreview ||
+    deterministicPreviewLoading ||
+    deterministicPreviewApplying;
 
   async function refresh(
     repositoryId = selectedRepositoryId,
@@ -161,16 +187,8 @@ function App() {
       api.get<RepositoryRecord[]>("/api/repositories"),
       api.get<RunRecord[]>(runsPath),
     ]);
-    const modelsResponse = await api.get<ModelsResponse>("/api/models");
 
     setRules(rulesResponse.rules);
-    setModels(modelsResponse.models);
-    setModelsError(modelsResponse.error ?? "");
-    setSelectedModel((current) =>
-      modelsResponse.models.some((model) => model.name === current)
-        ? current
-        : modelsResponse.models[0]?.name ?? DEFAULT_MODEL,
-    );
     setRepositories(repositoriesResponse);
     setEditedLabels((current) => {
       const next = { ...current };
@@ -191,6 +209,17 @@ function App() {
     }
   }
 
+  async function loadModels() {
+    const modelsResponse = await api.get<ModelsResponse>("/api/models");
+    setModels(modelsResponse.models);
+    setModelsError(modelsResponse.error ?? "");
+    setSelectedModel((current) =>
+      modelsResponse.models.some((model) => model.name === current)
+        ? current
+        : modelsResponse.models[0]?.name ?? DEFAULT_MODEL,
+    );
+  }
+
   async function loadFolder(repositoryId: string, relativePath: string) {
     const response = await api.get<FolderChildrenResponse>(
       `/api/repositories/${repositoryId}/folders?path=${encodeURIComponent(relativePath)}`,
@@ -208,6 +237,14 @@ function App() {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [selectedRepositoryId, runHistoryScope]);
+
+  useEffect(() => {
+    if (!usesModelPlannedRules) {
+      setModelsError("");
+      return;
+    }
+    loadModels().catch((error) => setModelsError(error.message));
+  }, [usesModelPlannedRules]);
 
   useEffect(() => {
     setFolderChildren({});
@@ -249,6 +286,10 @@ function App() {
 
   useEffect(() => {
     setPendingRunDraft(null);
+    setDeterministicPreview(null);
+    setDeterministicPreviewError("");
+    setDeterministicPreviewLoading(false);
+    setDeterministicPreviewApplying(false);
   }, [
     selectedRepositoryId,
     selectedTargetRelativePath,
@@ -475,10 +516,70 @@ function App() {
 
   async function startRun(event: React.FormEvent) {
     event.preventDefault();
+    if (canUseDeterministicPreview) {
+      await previewDeterministicChanges();
+      return;
+    }
     const draft = buildRunDraft();
     if (!draft) return;
     setMessage("");
     setPendingRunDraft(draft);
+  }
+
+  function buildRunRequestFromCurrentConfig() {
+    return {
+      repositoryId: selectedRepositoryId,
+      targetRelativePath: selectedTargetRelativePath,
+      rules: ruleMode === "manual" ? selectedRules : [],
+      ruleSelectionPlan: ruleMode === "automatic" ? ruleSelectionPlan : undefined,
+      model: usesModelPlannedRules ? selectedModel : undefined,
+      testFileMode,
+      validationCommands: lines(validationCommands),
+      protectedPaths: lines(protectedPaths),
+      repairBudget: 2,
+    };
+  }
+
+  async function previewDeterministicChanges() {
+    if (!selectedRepositoryId || !candidateFilePreview || !canUseDeterministicPreview) return;
+    setMessage("");
+    setDeterministicPreviewLoading(true);
+    setDeterministicPreviewError("");
+    setDeterministicPreview(null);
+    try {
+      const preview = await api.post<DeterministicPreviewResponse>(
+        "/api/runs/deterministic-preview",
+        buildRunRequestFromCurrentConfig(),
+      );
+      setDeterministicPreview(preview);
+    } catch (error) {
+      setDeterministicPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeterministicPreviewLoading(false);
+    }
+  }
+
+  async function applyDeterministicPreview() {
+    if (!deterministicPreview) return;
+    setDeterministicPreviewApplying(true);
+    setDeterministicPreviewError("");
+    try {
+      const response = await api.post<{ id: string }>(
+        "/api/runs/deterministic-preview/apply",
+        {
+          run: buildRunRequestFromCurrentConfig(),
+          previewFingerprint: deterministicPreview.previewFingerprint,
+        },
+      );
+      setDeterministicPreview(null);
+      setSelectedRunId(response.id);
+      setRunHistoryScope("repository");
+      await refresh();
+    } catch (error) {
+      setDeterministicPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeterministicPreviewApplying(false);
+    }
   }
 
   async function confirmPendingRun() {
@@ -769,6 +870,8 @@ function App() {
             validationCommands={validationCommands}
             protectedPaths={protectedPaths}
             startRunDisabled={startRunDisabled}
+            usesModelPlannedRules={usesModelPlannedRules}
+            primaryActionLabel={canUseDeterministicPreview ? "Preview changes" : "Start run"}
             onSubmit={startRun}
             onSelectModel={setSelectedModel}
             onSetTestFileMode={setTestFileMode}
@@ -815,6 +918,27 @@ function App() {
               onCancel={() => setPendingRunDraft(null)}
               onConfirm={() => confirmPendingRun().catch((error) => setMessage(error.message))}
             />
+          )}
+
+          {deterministicPreviewLoading && (
+            <p className="empty">Generating deterministic preview.</p>
+          )}
+
+          {deterministicPreview && (
+            <DeterministicPreviewPanel
+              preview={deterministicPreview}
+              applying={deterministicPreviewApplying}
+              error={deterministicPreviewError}
+              onCancel={() => {
+                setDeterministicPreview(null);
+                setDeterministicPreviewError("");
+              }}
+              onApply={() => applyDeterministicPreview().catch((error) => setMessage(error.message))}
+            />
+          )}
+
+          {!deterministicPreview && deterministicPreviewError && (
+            <small className="field-error">{deterministicPreviewError}</small>
           )}
 
           <div className="runs-layout">

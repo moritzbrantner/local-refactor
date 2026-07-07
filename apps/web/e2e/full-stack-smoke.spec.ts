@@ -14,7 +14,7 @@ const serviceUrl = "http://127.0.0.1:7373";
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const analyzerPath = join(repoRoot, "workers/typescript-analyzer/src/main.ts");
 
-test("full stack deterministic run can be started, reviewed, and reverted", async ({
+test("full stack deterministic run can be previewed, applied, reviewed, and reverted", async ({
   page,
   request,
 }) => {
@@ -65,9 +65,10 @@ test("full stack deterministic run can be started, reviewed, and reverted", asyn
       timeout: 30_000,
     });
 
-    await page.getByRole("button", { name: /Start run/ }).click();
-    await expect(page.getByRole("heading", { name: "Review run" })).toBeVisible();
-    await page.getByRole("button", { name: /Confirm and start run/ }).click();
+    await page.getByRole("button", { name: /Preview changes/ }).click();
+    await expect(page.getByRole("heading", { name: "Deterministic Preview" })).toBeVisible();
+    await expect(page.getByText("+  return value;").first()).toBeVisible();
+    await page.getByRole("button", { name: /Apply changes/ }).click();
 
     await expect(page.locator(".status.succeeded").first()).toBeVisible({
       timeout: 30_000,

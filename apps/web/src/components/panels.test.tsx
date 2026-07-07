@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import {
   candidatePreview,
+  deterministicPreview,
   folders,
   models,
   repository,
@@ -16,6 +17,7 @@ import type { RunRecord } from "../types";
 import {
   CandidateFilePreview,
   ChangePreviewSummary,
+  DeterministicPreviewPanel,
   FilePreviewPanel,
 } from "./previews";
 import {
@@ -194,7 +196,7 @@ describe("presentational panels", () => {
     expect(onToggleRule).toHaveBeenCalledWith("normalize-imports");
   });
 
-  test("RunConfigurationForm renders model, rules, candidate preview, and safety settings", () => {
+  test("RunConfigurationForm renders deterministic action without model controls", () => {
     const onSetTestFileMode = vi.fn();
     render(
       <RunConfigurationForm
@@ -206,6 +208,8 @@ describe("presentational panels", () => {
         validationCommands="bun test"
         protectedPaths="src/generated/**"
         startRunDisabled={false}
+        usesModelPlannedRules={false}
+        primaryActionLabel="Preview changes"
         ruleSelection={<p>Rules slot</p>}
         candidatePreviewState={<p>Candidate slot</p>}
         onSubmit={(event) => event.preventDefault()}
@@ -218,8 +222,36 @@ describe("presentational panels", () => {
     expect(screen.getByText("src")).toBeInTheDocument();
     expect(screen.getByText("Rules slot")).toBeInTheDocument();
     expect(screen.getByText("Candidate slot")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Preview changes/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Tests mutable/ }));
     expect(onSetTestFileMode).toHaveBeenCalledWith("mutable");
+  });
+
+  test("RunConfigurationForm renders model controls for model-planned rules", () => {
+    render(
+      <RunConfigurationForm
+        selectedTargetRelativePath="src"
+        selectedModel="qwen2.5-coder:7b"
+        models={models}
+        modelsError=""
+        testFileMode="readOnly"
+        validationCommands="bun test"
+        protectedPaths="src/generated/**"
+        startRunDisabled={false}
+        usesModelPlannedRules
+        primaryActionLabel="Start run"
+        ruleSelection={<p>Rules slot</p>}
+        candidatePreviewState={<p>Candidate slot</p>}
+        onSubmit={(event) => event.preventDefault()}
+        onSelectModel={vi.fn()}
+        onSetTestFileMode={vi.fn()}
+        onSetValidationCommands={vi.fn()}
+        onSetProtectedPaths={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start run/ })).toBeInTheDocument();
   });
 
   test("CandidateFilePreview renders grouped, empty, hidden, selected, loading, and error states", () => {
@@ -285,6 +317,48 @@ describe("presentational panels", () => {
     expect(screen.getByText("No deterministic edits found.")).toBeInTheDocument();
     rerender(<ChangePreviewSummary edit={null} loading={false} error="analysis failed" unavailable={false} />);
     expect(screen.getByText("analysis failed")).toBeInTheDocument();
+  });
+
+  test("DeterministicPreviewPanel renders diff, empty, loading, and error states", () => {
+    const onApply = vi.fn();
+    const { rerender } = render(
+      <DeterministicPreviewPanel
+        preview={deterministicPreview()}
+        applying={false}
+        error=""
+        onApply={onApply}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Deterministic Preview" })).toBeInTheDocument();
+    expect(screen.getByText("src/sample.ts")).toBeInTheDocument();
+    expect(screen.getByText(/return value/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    expect(onApply).toHaveBeenCalled();
+
+    rerender(
+      <DeterministicPreviewPanel
+        preview={deterministicPreview({ files: [] })}
+        applying={false}
+        error=""
+        onApply={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("No deterministic edits found.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply changes" })).toBeDisabled();
+
+    rerender(
+      <DeterministicPreviewPanel
+        preview={deterministicPreview()}
+        applying
+        error="Preview changed"
+        onApply={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Preview changed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply changes" })).toBeDisabled();
   });
 
   test("RunReviewPanel renders automatic and manual review states", () => {

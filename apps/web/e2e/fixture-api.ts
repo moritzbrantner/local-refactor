@@ -17,7 +17,7 @@ type RunRecord = {
   updatedAt: string;
   rules: string[];
   ruleSelectionPlan?: RuleSelectionPlan | null;
-  model: string;
+  model: string | null;
   testFileMode: string;
   validationCommands: string[];
   protectedPaths: string[];
@@ -69,6 +69,22 @@ type CandidateFilePreviewResponse = {
     hiddenFiles: number;
     files: Array<{ relativePath: string }>;
   }>;
+};
+
+type DeterministicPreviewResponse = {
+  targetRelativePath: string;
+  rules: string[];
+  previewFingerprint: string;
+  files: Array<{
+    relativePath: string;
+    filePath: string;
+    ruleIds: string[];
+    summaries: string[];
+    originalContentHash: string;
+    newContentHash: string;
+    diff: string;
+  }>;
+  diagnostics: string[];
 };
 
 const now = "2026-06-30T12:00:00.000Z";
@@ -128,6 +144,20 @@ export class FixtureApi {
               requiresTypeInformation: false,
               requiresImportGraph: false,
               planningProfile: "local-transformation",
+            },
+            {
+              id: "rust-add-documentation-comments",
+              language: "rust",
+              name: "Add Rust Documentation Comments",
+              description: "Adds Rust doc comments to public items without changing compiled behavior.",
+              executionKind: "modelPlanned",
+              allowedWrites: "single-file",
+              category: "documentation",
+              safetyLevel: "typecheck-required",
+              preserves: ["runtime-behavior", "public-api", "typecheck", "comments"],
+              requiresTypeInformation: false,
+              requiresImportGraph: false,
+              planningProfile: "documentation-only",
             },
           ],
         });
@@ -277,6 +307,37 @@ export class FixtureApi {
         return fulfillJson(route, { id: run.id }, 202);
       }
 
+      if (method === "POST" && path === "/api/runs/deterministic-preview") {
+        const body = request.postDataJSON() as Record<string, unknown>;
+        return fulfillJson(route, deterministicPreviewForRequest(body));
+      }
+
+      if (method === "POST" && path === "/api/runs/deterministic-preview/apply") {
+        const body = request.postDataJSON() as {
+          run: Record<string, unknown>;
+          previewFingerprint: string;
+        };
+        this.lastRunRequest = body.run;
+        const repository = this.repositories.find(
+          (item) => item.id === body.run.repositoryId,
+        ) ?? defaultRepository();
+        const run = succeededRun({
+          id: "run-created",
+          repository,
+          targetRelativePath: String(body.run.targetRelativePath ?? "."),
+          rules: ((body.run.rules as string[] | undefined)?.length
+            ? body.run.rules
+            : ["simplify-conditional"]) as string[],
+          ruleSelectionPlan: body.run.ruleSelectionPlan as RuleSelectionPlan | undefined,
+          model: null,
+          testFileMode: String(body.run.testFileMode),
+          validationCommands: body.run.validationCommands as string[],
+          protectedPaths: body.run.protectedPaths as string[],
+        });
+        this.runs = [run, ...this.runs.filter((item) => item.id !== run.id)];
+        return fulfillJson(route, { id: run.id }, 202);
+      }
+
       const reviewMatch = path.match(/^\/api\/runs\/([^/]+)\/review$/);
       if (method === "GET" && reviewMatch) {
         const run = this.runs.find((item) => item.id === reviewMatch[1]);
@@ -373,7 +434,7 @@ export function succeededRun(options: {
   targetRelativePath?: string;
   rules?: string[];
   ruleSelectionPlan?: RuleSelectionPlan;
-  model?: string;
+  model?: string | null;
   testFileMode?: string;
   validationCommands?: string[];
   protectedPaths?: string[];
@@ -436,19 +497,49 @@ function defaultCandidateFilePreview(
     totalCandidateFiles: files.length,
     limitPerGroup: 50,
     groups: rules.map((ruleId) => {
-      const ruleName = ruleId === "normalize-imports" ? "Normalize Imports" : "Simplify Conditional";
+      const isRust = ruleId.startsWith("rust-");
+      const ruleName = isRust
+        ? "Add Rust Documentation Comments"
+        : ruleId === "normalize-imports"
+          ? "Normalize Imports"
+          : "Simplify Conditional";
       return {
         id: `segment:${segment}:rule:${ruleId}`,
         label: `${segment} - ${ruleName}`,
         segmentRelativePath: segment,
         ruleId,
         ruleName,
-        language: "typescript",
+        language: isRust ? "rust" : "typescript",
         totalFiles: files.length,
         hiddenFiles: 0,
         files,
       };
     }),
+  };
+}
+
+function deterministicPreviewForRequest(
+  body: Record<string, unknown>,
+): DeterministicPreviewResponse {
+  const rules = ((body.rules as string[] | undefined)?.length
+    ? (body.rules as string[])
+    : ["simplify-conditional"]) as string[];
+  return {
+    targetRelativePath: String(body.targetRelativePath ?? "."),
+    rules,
+    previewFingerprint: "fixture-preview-fingerprint",
+    diagnostics: ["Analyzed /tmp/local-refactor-fixture/src/sample.ts"],
+    files: [
+      {
+        relativePath: "src/sample.ts",
+        filePath: "/tmp/local-refactor-fixture/src/sample.ts",
+        ruleIds: rules,
+        summaries: ["Replaced boolean conditional with direct return."],
+        originalContentHash: "original-hash",
+        newContentHash: "new-hash",
+        diff: diffResponse("preview").files[0].diff,
+      },
+    ],
   };
 }
 

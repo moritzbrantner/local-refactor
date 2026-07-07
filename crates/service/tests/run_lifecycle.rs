@@ -808,6 +808,201 @@ async fn root_folder_run_applies_known_refactor_and_keeps_worktree_scoped() {
 }
 
 #[tokio::test]
+async fn deterministic_preview_returns_whole_run_diff_without_creating_run() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+
+    let preview = harness
+        .post_json(
+            "/api/runs/deterministic-preview",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional"],
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+
+    assert_eq!(preview.status, StatusCode::OK);
+    assert_eq!(preview.json["rules"], json!(["simplify-conditional"]));
+    assert!(preview.json["previewFingerprint"].as_str().unwrap().len() > 20);
+    assert_eq!(preview.json["files"].as_array().unwrap().len(), 1);
+    let file = &preview.json["files"][0];
+    assert_eq!(file["relativePath"], "src/sample.ts");
+    assert!(file["diff"].as_str().unwrap().contains("+  return value;"));
+    assert!(harness.db.list_runs(None).unwrap().is_empty());
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("return false;"));
+}
+
+#[tokio::test]
+async fn deterministic_preview_rejects_mixed_rule_sets() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+
+    let preview = harness
+        .post_json(
+            "/api/runs/deterministic-preview",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["simplify-conditional", "add-documentation-comments"]
+            }),
+        )
+        .await;
+
+    assert_eq!(preview.status, StatusCode::BAD_REQUEST);
+    assert!(preview.json["error"]
+        .as_str()
+        .unwrap()
+        .contains("deterministic TypeScript rules"));
+}
+
+#[tokio::test]
+async fn deterministic_preview_apply_creates_normal_run_and_can_revert() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+
+    let run_request = json!({
+        "targetPath": harness.repo.path().to_string_lossy(),
+        "rules": ["simplify-conditional"],
+        "validationCommands": ["grep -q 'return value;' src/sample.ts"]
+    });
+    let preview = harness
+        .post_json("/api/runs/deterministic-preview", run_request.clone())
+        .await;
+    assert_eq!(preview.status, StatusCode::OK);
+
+    let created = harness
+        .post_json(
+            "/api/runs/deterministic-preview/apply",
+            json!({
+                "run": run_request,
+                "previewFingerprint": preview.json["previewFingerprint"]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    let run = harness.poll_run(&run_id, "succeeded").await;
+
+    assert_eq!(run["model"], Value::Null);
+    assert!(std::fs::read_to_string(&sample)
+        .unwrap()
+        .contains("return value;"));
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    let review = harness
+        .get_json(&format!("/api/runs/{run_id}/review"))
+        .await;
+    assert!(review.json["metrics"]["modelEnsureAvailableMs"].is_null());
+    assert!(review.json["metrics"]["modelPlanningMs"].is_null());
+
+    let reverted = harness
+        .post_json(&format!("/api/runs/{run_id}/revert"), json!({}))
+        .await;
+    assert_eq!(reverted.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        std::fs::read_to_string(&sample).unwrap(),
+        conditional_source()
+    );
+}
+
+#[tokio::test]
+async fn deterministic_preview_apply_rejects_stale_preview_without_creating_run() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, conditional_source()).unwrap();
+
+    let run_request = json!({
+        "targetPath": harness.repo.path().to_string_lossy(),
+        "rules": ["simplify-conditional"],
+        "validationCommands": ["true"]
+    });
+    let preview = harness
+        .post_json("/api/runs/deterministic-preview", run_request.clone())
+        .await;
+    assert_eq!(preview.status, StatusCode::OK);
+    std::fs::write(&sample, "export const unchanged = true;\n").unwrap();
+
+    let apply = harness
+        .post_json(
+            "/api/runs/deterministic-preview/apply",
+            json!({
+                "run": run_request,
+                "previewFingerprint": preview.json["previewFingerprint"]
+            }),
+        )
+        .await;
+
+    assert_eq!(apply.status, StatusCode::CONFLICT);
+    assert!(harness.db.list_runs(None).unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(&sample).unwrap(),
+        "export const unchanged = true;\n"
+    );
+}
+
+#[tokio::test]
+async fn multi_rule_deterministic_preview_matches_applied_content() {
+    let harness = Harness::new();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(
+        &sample,
+        [
+            "import { beta } from \"./tools\";",
+            "import { alpha } from \"./tools\";",
+            "",
+            "export function isReady(value: boolean) {",
+            "  if (value) {",
+            "    return true;",
+            "  }",
+            "  return false;",
+            "}",
+            "",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let run_request = json!({
+        "targetPath": harness.repo.path().to_string_lossy(),
+        "rules": ["normalize-imports", "simplify-conditional"],
+        "validationCommands": ["grep -q 'return value;' src/sample.ts"]
+    });
+    let preview = harness
+        .post_json("/api/runs/deterministic-preview", run_request.clone())
+        .await;
+    assert_eq!(preview.status, StatusCode::OK);
+    let preview_diff = preview.json["files"][0]["diff"].as_str().unwrap();
+    assert!(preview_diff.contains("import { alpha, beta }"));
+    assert!(preview_diff.contains("+  return value;"));
+
+    let created = harness
+        .post_json(
+            "/api/runs/deterministic-preview/apply",
+            json!({
+                "run": run_request,
+                "previewFingerprint": preview.json["previewFingerprint"]
+            }),
+        )
+        .await;
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+    harness.poll_run(&run_id, "succeeded").await;
+    let applied = std::fs::read_to_string(&sample).unwrap();
+    assert!(applied.contains("import { alpha, beta }"));
+    assert!(applied.contains("return value;"));
+}
+
+#[tokio::test]
 async fn run_applies_simplify_conditional_and_records_diff() {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.ts");

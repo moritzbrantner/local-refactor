@@ -65,7 +65,7 @@ export type RunRecord = {
   updatedAt: string;
   rules: string[];
   ruleSelectionPlan?: RuleSelectionPlan | null;
-  model?: string;
+  model?: string | null;
   testFileMode: string;
   validationCommands: string[];
   protectedPaths: string[];
@@ -120,6 +120,29 @@ export type DiffFile = {
 export type DiffResponse = {
   runId: string;
   files: DiffFile[];
+};
+
+export type DeterministicPreviewFile = {
+  relativePath: string;
+  filePath: string;
+  ruleIds: string[];
+  summaries: string[];
+  originalContentHash: string;
+  newContentHash: string;
+  diff: string;
+};
+
+export type DeterministicPreviewResponse = {
+  targetRelativePath: string;
+  rules: string[];
+  previewFingerprint: string;
+  files: DeterministicPreviewFile[];
+  diagnostics: string[];
+};
+
+export type DeterministicPreviewApplyRequest = {
+  run: unknown;
+  previewFingerprint: string;
 };
 
 export type RunMetrics = {

@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import type {
   AnalyzerEdit,
   CandidateFilePreviewResponse,
+  DeterministicPreviewResponse,
   RepositoryFilePreviewResponse,
 } from "../types";
 import { changedLineNumbers, formatBytes, languageLabel } from "../view-helpers";
@@ -255,4 +256,68 @@ export function CodePreview({ content, highlightedLines, language, path }: CodeP
   }, [content, highlightedLines, language, path]);
 
   return <div className="code-preview" ref={containerRef} />;
+}
+
+export type DeterministicPreviewPanelProps = {
+  preview: DeterministicPreviewResponse;
+  applying: boolean;
+  error: string;
+  onApply: () => void;
+  onCancel: () => void;
+};
+
+export function DeterministicPreviewPanel({
+  preview,
+  applying,
+  error,
+  onApply,
+  onCancel,
+}: DeterministicPreviewPanelProps) {
+  return (
+    <section className="run-review deterministic-preview-panel">
+      <div className="run-review-title">
+        <h3>Deterministic Preview</h3>
+        <span>{preview.files.length} files</span>
+      </div>
+      {preview.diagnostics.length > 0 && (
+        <div className="event-list compact-events">
+          {preview.diagnostics.slice(0, 6).map((diagnostic) => (
+            <p key={diagnostic}>{diagnostic}</p>
+          ))}
+        </div>
+      )}
+      {preview.files.length === 0 ? (
+        <p className="empty">No deterministic edits found.</p>
+      ) : (
+        <div className="diff-stack">
+          {preview.files.map((file) => (
+            <article className="diff-file" key={file.filePath}>
+              <h3>{file.relativePath}</h3>
+              <div className="diff-summary">
+                {file.ruleIds.map((ruleId) => (
+                  <span key={ruleId}>{ruleId}</span>
+                ))}
+                <p>{file.summaries.join("; ")}</p>
+              </div>
+              <pre>{file.diff}</pre>
+            </article>
+          ))}
+        </div>
+      )}
+      {error && <small className="field-error">{error}</small>}
+      <div className="review-actions">
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={applying || preview.files.length === 0}
+          onClick={onApply}
+        >
+          Apply changes
+        </button>
+      </div>
+    </section>
+  );
 }

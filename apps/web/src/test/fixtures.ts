@@ -1,6 +1,7 @@
 import type {
   AnalyzerEdit,
   CandidateFilePreviewResponse,
+  DeterministicPreviewResponse,
   FolderEntry,
   ModelSummary,
   RepositoryFilePreviewResponse,
@@ -154,6 +155,29 @@ export const analyzerEdit: AnalyzerEdit = {
   ruleId: "simplify-conditional",
   summary: "Replaced boolean conditional with direct return.",
 };
+
+export function deterministicPreview(
+  overrides: Partial<DeterministicPreviewResponse> = {},
+): DeterministicPreviewResponse {
+  return {
+    targetRelativePath: ".",
+    rules: ["simplify-conditional"],
+    previewFingerprint: "preview-fingerprint",
+    diagnostics: ["Analyzed /tmp/local-refactor-fixture/src/sample.ts: 1 function declarations, 0 arrow functions"],
+    files: [
+      {
+        relativePath: "src/sample.ts",
+        filePath: "/tmp/local-refactor-fixture/src/sample.ts",
+        ruleIds: ["simplify-conditional"],
+        summaries: ["Replaced boolean conditional with direct return."],
+        originalContentHash: "original-hash",
+        newContentHash: "new-hash",
+        diff: "--- /tmp/local-refactor-fixture/src/sample.ts\n+++ /tmp/local-refactor-fixture/src/sample.ts\n+  return value;\n",
+      },
+    ],
+    ...overrides,
+  };
+}
 
 export function run(overrides: Partial<RunRecord> = {}): RunRecord {
   return {

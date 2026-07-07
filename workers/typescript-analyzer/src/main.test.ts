@@ -91,6 +91,32 @@ test("reports diagnostics for every requested file", () => {
   expect(analyzed[1]).toContain("1 arrow functions");
 });
 
+test("accepts in-memory source entries", () => {
+  const source = conditionalFixture();
+
+  const response = plan({
+    files: [{ filePath: "memory/sample.ts", content: source }],
+    rules: ["simplify-conditional"],
+  });
+
+  expect(response.edits).toHaveLength(1);
+  expect(response.edits[0].filePath).toBe("memory/sample.ts");
+  expect(response.edits[0].originalContent).toBe(source);
+  expect(response.edits[0].newContent).toContain("return value;");
+});
+
+test("preserves path string source entries", () => {
+  const source = conditionalFixture();
+
+  const response = withTempSource("path-source", source, (file) =>
+    plan({ files: [file], rules: ["simplify-conditional"] }),
+  );
+
+  expect(response.edits).toHaveLength(1);
+  expect(response.edits[0].filePath).toContain("path-source.ts");
+  expect(response.edits[0].newContent).toContain("return value;");
+});
+
 test("skips unreadable or missing files without failing whole plan", () => {
   const manifest = fixtureManifests().find(
     (candidate) => candidate.ruleId === "simplify-conditional",
@@ -153,6 +179,18 @@ function fixtureManifests(): RuleFixtureManifest[] {
       return manifest;
     })
     .sort((left, right) => left.ruleId.localeCompare(right.ruleId));
+}
+
+function conditionalFixture() {
+  return [
+    "export function isReady(value: boolean) {",
+    "  if (value) {",
+    "    return true;",
+    "  }",
+    "  return false;",
+    "}",
+    "",
+  ].join("\n");
 }
 
 function validateManifest(manifest: RuleFixtureManifest, manifestPath: string) {

@@ -253,6 +253,8 @@ export const RunConfigurationWithCandidatePreview: Story = {
       validationCommands="bun test"
       protectedPaths="src/generated/**"
       startRunDisabled={false}
+      usesModelPlannedRules={false}
+      primaryActionLabel="Preview changes"
       ruleSelection={<p className="empty">Rules slot</p>}
       candidatePreviewState={<p className="empty">{candidatePreview().totalCandidateFiles} candidates ready.</p>}
       onSubmit={(event) => event.preventDefault()}

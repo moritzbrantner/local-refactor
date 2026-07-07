@@ -394,6 +394,8 @@ export type RunConfigurationFormProps = {
   validationCommands: string;
   protectedPaths: string;
   startRunDisabled: boolean;
+  usesModelPlannedRules: boolean;
+  primaryActionLabel: "Preview changes" | "Start run";
   candidatePreviewState: ReactNode;
   ruleSelection: ReactNode;
   onSubmit: (event: FormEvent) => void;
@@ -412,6 +414,8 @@ export function RunConfigurationForm({
   validationCommands,
   protectedPaths,
   startRunDisabled,
+  usesModelPlannedRules,
+  primaryActionLabel,
   candidatePreviewState,
   ruleSelection,
   onSubmit,
@@ -427,24 +431,26 @@ export function RunConfigurationForm({
         <strong>{selectedTargetRelativePath === ROOT_PATH ? "Repository root" : selectedTargetRelativePath}</strong>
       </div>
 
-      <div className="field-group">
-        <span>Model</span>
-        <label className="model-select">
-          <Cpu size={16} />
-          <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)}>
-            {models.map((model) => (
-              <option key={model.name} value={model.name}>
-                {model.label} {model.downloaded ? "downloaded" : "not downloaded"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <small className="field-note">
-          {models.find((model) => model.name === selectedModel)?.description ??
-            "Selected model is downloaded automatically before the run."}
-        </small>
-        {modelsError && <small className="field-error">{modelsError}</small>}
-      </div>
+      {usesModelPlannedRules && (
+        <div className="field-group">
+          <span>Model</span>
+          <label className="model-select">
+            <Cpu size={16} />
+            <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)}>
+              {models.map((model) => (
+                <option key={model.name} value={model.name}>
+                  {model.label} {model.downloaded ? "downloaded" : "not downloaded"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <small className="field-note">
+            {models.find((model) => model.name === selectedModel)?.description ??
+              "Selected model is downloaded automatically before the run."}
+          </small>
+          {modelsError && <small className="field-error">{modelsError}</small>}
+        </div>
+      )}
 
       {ruleSelection}
 
@@ -485,7 +491,7 @@ export function RunConfigurationForm({
 
       <button className="primary" type="submit" disabled={startRunDisabled}>
         <Play size={18} />
-        Start run
+        {primaryActionLabel}
       </button>
     </form>
   );

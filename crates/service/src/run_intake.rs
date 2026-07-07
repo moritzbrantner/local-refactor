@@ -10,7 +10,9 @@ use local_refactor_core::{
     },
     path_policy::{is_source_for_language, PathDecision, PathPolicy},
     rule_selection::{select_rules, RuleSelectionInput, RuleSelectionPlan},
-    rules::{planning_context_for, rule_by_id, Language, RuleDefinition, StackContext},
+    rules::{
+        planning_context_for, rule_by_id, Language, RuleDefinition, RuleExecutionKind, StackContext,
+    },
 };
 use serde::Serialize;
 use std::{
@@ -97,7 +99,11 @@ pub(crate) fn normalize_request(
         }
         request.rules = flattened_plan_rules(request.rule_selection_plan.as_ref());
     }
-    request.model = Some(selected_model(&request)?);
+    request.model = if request_rules_need_model(&request.rules)? {
+        Some(selected_model(&request)?)
+    } else {
+        None
+    };
     Ok(request)
 }
 
@@ -113,6 +119,14 @@ pub(crate) fn effective_rules(request: &RunCreateRequest) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn request_rules_need_model(rule_ids: &[String]) -> Result<bool> {
+    rule_ids.iter().try_fold(false, |needs_model, rule_id| {
+        let rule =
+            rule_by_id(rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
+        Ok(needs_model || rule.execution_kind == RuleExecutionKind::ModelPlanned)
+    })
 }
 
 pub(crate) fn rule_selection_plan_for_request(

@@ -184,6 +184,7 @@ mod tests {
             validation_commands: vec!["true".to_string()],
             protected_paths: Vec::new(),
             repair_budget: 2,
+            expected_deterministic_preview_fingerprint: None,
         };
         db.insert_run("run-1", &request).unwrap();
     }

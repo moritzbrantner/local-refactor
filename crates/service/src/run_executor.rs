@@ -1,5 +1,6 @@
 use crate::{
     analyzer::{self, AnalyzerRequest},
+    deterministic_preview,
     edit_journal::{self, JournaledEdit},
     patch_plan::{self, PatchPlanEdit, PatchPlanRepairContext},
     run_cancellation::RunCancellationToken,
@@ -120,6 +121,27 @@ async fn run_job_inner(
         metrics.model_ensure_available_ms = Some(elapsed_ms(started));
         ensure_result?;
         check_cancelled(cancellation)?;
+    }
+
+    if !needs_model {
+        execute_deterministic_run(state, id, request, cancellation, metrics).await?;
+        let validation_result = run_validation(state, id, request, metrics).await?;
+        check_cancelled(cancellation)?;
+        if validation_result.success {
+            transition(
+                state,
+                id,
+                RunStatus::Succeeded,
+                "Run completed successfully",
+            )?;
+            return Ok(());
+        }
+
+        append_run_event(state, id, "Validation failed; reverting run changes")?;
+        return Err(anyhow!(
+            "validation failed: {}",
+            validation_result.output.trim()
+        ));
     }
 
     if let Some(plan) = request.rule_selection_plan.as_ref() {
@@ -266,7 +288,10 @@ async fn execute_rule(
             let analyzer_response = analyzer::run(
                 &state.analyzer_script,
                 AnalyzerRequest {
-                    files,
+                    files: files
+                        .into_iter()
+                        .map(analyzer::AnalyzerSourceFile::Path)
+                        .collect(),
                     rules: vec![rule.id.to_string()],
                 },
             )
@@ -299,6 +324,82 @@ async fn execute_rule(
         }
     }
 
+    Ok(())
+}
+
+async fn execute_deterministic_run(
+    state: &ServiceState,
+    id: &str,
+    request: &RunCreateRequest,
+    cancellation: &RunCancellationToken,
+    metrics: &mut RunMetrics,
+) -> Result<()> {
+    transition(
+        state,
+        id,
+        RunStatus::Analyzing,
+        "Collecting mutable TypeScript files",
+    )?;
+    check_cancelled(cancellation)?;
+    transition(
+        state,
+        id,
+        RunStatus::Planning,
+        "Running TypeScript analyzer worker for deterministic preview",
+    )?;
+    if let Some(plan) = request.rule_selection_plan.as_ref() {
+        for segment in &plan.segments {
+            append_run_event(
+                state,
+                id,
+                &format!(
+                    "Running automatic rule segment {}",
+                    if segment.relative_path.is_empty() {
+                        "."
+                    } else {
+                        segment.relative_path.as_str()
+                    }
+                ),
+            )?;
+        }
+    }
+    let started = Instant::now();
+    let plan = deterministic_preview::plan(&state.analyzer_script, request).await;
+    add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
+    let plan = plan?;
+    metrics.file_collection_ms = Some(metrics.file_collection_ms.unwrap_or(0));
+    deterministic_preview::validate_fingerprint(
+        &plan,
+        request
+            .expected_deterministic_preview_fingerprint
+            .as_deref(),
+    )?;
+    check_cancelled(cancellation)?;
+
+    for diagnostic in plan.response.diagnostics {
+        append_run_event(state, id, &diagnostic)?;
+    }
+
+    if plan.response.files.is_empty() {
+        append_run_event(state, id, "Analyzer produced no edits")?;
+        return Ok(());
+    }
+
+    transition(
+        state,
+        id,
+        RunStatus::Editing,
+        "Applying deterministic analyzer edits",
+    )?;
+    let started = Instant::now();
+    for step in plan.steps {
+        if step.edits.is_empty() {
+            continue;
+        }
+        edit_journal::apply_edits(&state.db, id, &step.policy, step.edits.clone())?;
+        append_applied_events(state, id, step.edits)?;
+    }
+    add_elapsed_ms(&mut metrics.edit_application_ms, started);
     Ok(())
 }
 
