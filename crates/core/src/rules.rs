@@ -643,6 +643,8 @@ fn stack_rules_for(context: StackContext) -> Vec<String> {
                 .to_string(),
             "TypeScript React: extract pure helpers for calculations, parsing, formatting, filtering, and sorting."
                 .to_string(),
+            "TypeScript React: prefer styling via tailwindcss utility classes when styling changes are needed."
+                .to_string(),
             "TypeScript React: add browser or API adapters only when duplicated, noisy, or genuinely variable."
                 .to_string(),
         ],
@@ -678,6 +680,16 @@ mod tests {
 
         assert!(combined.contains("pub(crate) over pub"));
         assert!(combined.contains("add traits only for real variation"));
+    }
+
+    #[test]
+    fn react_policy_prefers_tailwindcss_styling() {
+        let rule = rule_by_id("split-file-by-responsibility").unwrap();
+        let context =
+            planning_context_for(rule, TestFileMode::ReadOnly, &[StackContext::TypeScriptReact]);
+        let combined = combined_policy(&context);
+
+        assert!(combined.contains("prefer styling via tailwindcss"));
     }
 
     #[test]
