@@ -8,6 +8,7 @@ use local_refactor_core::{
         default_protected_paths, find_project_config, load_config_file, ConfigLayer,
         EffectiveConfig,
     },
+    conventions::ConventionSettings,
     path_policy::{is_source_for_language, PathDecision, PathPolicy},
     rule_selection::{select_rules, RuleSelectionInput, RuleSelectionPlan},
     rules::{
@@ -76,10 +77,12 @@ pub(crate) fn normalize_request(
             Some(request.validation_commands.clone())
         },
         test_file_mode: request.test_file_mode,
+        conventions: None,
     };
 
     let target_path = request_target_path(&request)?.to_string();
     let config = effective_config_for(Path::new(&target_path), run_layer)?;
+    request.convention_snapshot = Some(effective_conventions_for_request(db, &request, &config)?);
     request.protected_paths = config.protected_paths;
     request.validation_commands = config.validation_commands;
     request.test_file_mode = Some(config.test_file_mode);
@@ -147,6 +150,7 @@ pub(crate) fn rule_selection_plan_for_request(
             Some(request.validation_commands.clone())
         },
         test_file_mode: request.test_file_mode,
+        conventions: None,
     };
     let target_path = request_target_path(&request)?;
     let config = effective_config_for(Path::new(target_path), run_layer)?;
@@ -158,6 +162,20 @@ pub(crate) fn rule_selection_plan_for_request(
         test_file_mode: config.test_file_mode,
     })?;
     Ok((plan, config))
+}
+
+fn effective_conventions_for_request(
+    db: &Database,
+    request: &RunCreateRequest,
+    config: &EffectiveConfig,
+) -> Result<ConventionSettings> {
+    let mut conventions = config.conventions.clone();
+    if let Some(repository_id) = request.repository_id.as_deref() {
+        if let Some(local_override) = db.get_repository_convention_override(repository_id)? {
+            conventions.apply_partial(local_override);
+        }
+    }
+    Ok(conventions)
 }
 
 pub(crate) fn candidate_file_preview_for_request(

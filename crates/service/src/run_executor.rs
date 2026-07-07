@@ -1,6 +1,6 @@
 use crate::{
     analyzer::{self, AnalyzerRequest},
-    deterministic_preview,
+    convention_executor, deterministic_preview,
     edit_journal::{self, JournaledEdit},
     patch_plan::{self, PatchPlanEdit, PatchPlanRepairContext},
     run_cancellation::RunCancellationToken,
@@ -273,37 +273,68 @@ async fn execute_rule(
 
     match rule.execution_kind {
         RuleExecutionKind::Deterministic => {
-            if rule.language != Language::TypeScript {
+            if let Some(reason) = convention_rule_disabled_reason(request, rule.id) {
+                state.db.append_event(id, &reason)?;
+            } else if convention_executor::is_service_convention_rule(rule.id) {
+                transition(
+                    state,
+                    id,
+                    RunStatus::Planning,
+                    &format!("Running deterministic convention rule {}", rule.id),
+                )?;
+                let started = Instant::now();
+                let (edits, diagnostics) =
+                    convention_executor::plan_rule(request, rule.id, &files, &mut |file| {
+                        std::fs::read_to_string(file)
+                            .map_err(|error| anyhow!("failed to read {file}: {error}"))
+                    })
+                    .await?;
+                add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
+                check_cancelled(cancellation)?;
+
+                let started = Instant::now();
+                let edit_result = apply_analyzer_response(
+                    state,
+                    id,
+                    &policy,
+                    analyzer::AnalyzerResponse { edits, diagnostics },
+                );
+                add_elapsed_ms(&mut metrics.edit_application_ms, started);
+                edit_result?;
+            } else if rule.language == Language::TypeScript {
+                transition(
+                    state,
+                    id,
+                    RunStatus::Planning,
+                    &format!("Running TypeScript analyzer worker for {}", rule.id),
+                )?;
+                let started = Instant::now();
+                let analyzer_response = analyzer::run(
+                    &state.analyzer_script,
+                    AnalyzerRequest {
+                        files: files
+                            .into_iter()
+                            .map(analyzer::AnalyzerSourceFile::Path)
+                            .collect(),
+                        rules: vec![rule.id.to_string()],
+                    },
+                )
+                .await;
+                add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
+                let analyzer_response = analyzer_response?;
+                check_cancelled(cancellation)?;
+
+                let started = Instant::now();
+                let edit_result = apply_analyzer_response(state, id, &policy, analyzer_response);
+                add_elapsed_ms(&mut metrics.edit_application_ms, started);
+                edit_result?;
+            } else {
                 return Err(anyhow!(
-                    "deterministic analyzer rules are only available for TypeScript"
+                    "deterministic rule {} is not available for {}",
+                    rule.id,
+                    rule.language.display_name()
                 ));
             }
-            transition(
-                state,
-                id,
-                RunStatus::Planning,
-                &format!("Running TypeScript analyzer worker for {}", rule.id),
-            )?;
-            let started = Instant::now();
-            let analyzer_response = analyzer::run(
-                &state.analyzer_script,
-                AnalyzerRequest {
-                    files: files
-                        .into_iter()
-                        .map(analyzer::AnalyzerSourceFile::Path)
-                        .collect(),
-                    rules: vec![rule.id.to_string()],
-                },
-            )
-            .await;
-            add_elapsed_ms(&mut metrics.analyzer_planning_ms, started);
-            let analyzer_response = analyzer_response?;
-            check_cancelled(cancellation)?;
-
-            let started = Instant::now();
-            let edit_result = apply_analyzer_response(state, id, &policy, analyzer_response);
-            add_elapsed_ms(&mut metrics.edit_application_ms, started);
-            edit_result?;
         }
         RuleExecutionKind::ModelPlanned => {
             let model = model.ok_or_else(|| anyhow!("model-planned rule requires a model"))?;
@@ -325,6 +356,20 @@ async fn execute_rule(
     }
 
     Ok(())
+}
+
+fn convention_rule_disabled_reason(request: &RunCreateRequest, rule_id: &str) -> Option<String> {
+    let conventions = request.convention_snapshot.as_ref()?;
+    match rule_id {
+        "normalize-imports" if !conventions.typescript.ordering.imports => {
+            Some("Skipped normalize-imports: TypeScript import ordering is disabled".to_string())
+        }
+        "sort-typescript-class-members" if !conventions.typescript.ordering.class_members => Some(
+            "Skipped sort-typescript-class-members: TypeScript class member ordering is disabled"
+                .to_string(),
+        ),
+        _ => None,
+    }
 }
 
 async fn execute_deterministic_run(

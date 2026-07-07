@@ -13,7 +13,8 @@ export type Rule = {
     | "module-organization"
     | "type-structure"
     | "declaration-organization"
-    | "documentation";
+    | "documentation"
+    | "formatting";
   safetyLevel: "syntax-only" | "typecheck-required" | "test-required";
   preserves: Array<
     | "runtime-behavior"
@@ -74,6 +75,50 @@ export type RunRecord = {
   repositoryId?: string;
   repositoryRootPath?: string;
   targetRelativePath?: string;
+  conventionSnapshot?: ConventionSettings | null;
+};
+
+export type ConventionProfile = "standard" | "minimal" | "custom";
+
+export type FormatterConventionSettings = {
+  enabled: boolean;
+  requireConfig: boolean;
+};
+
+export type TypeScriptOrderingSettings = {
+  imports: boolean;
+  classMembers: boolean;
+  memberGroups: string[];
+  alphabeticalWithinGroups: boolean;
+};
+
+export type RustOrderingSettings = {
+  useItems: boolean;
+  implMembers: boolean;
+  memberGroups: string[];
+  alphabeticalWithinGroups: boolean;
+};
+
+export type ConventionSettings = {
+  profile: ConventionProfile;
+  typescript: {
+    formatter: FormatterConventionSettings;
+    ordering: TypeScriptOrderingSettings;
+  };
+  rust: {
+    formatter: FormatterConventionSettings;
+    ordering: RustOrderingSettings;
+  };
+};
+
+export type PartialConventionSettings = Partial<ConventionSettings>;
+
+export type RepositoryConventionsResponse = {
+  repositoryId: string;
+  projectConfig: ConventionSettings | null;
+  localOverride: PartialConventionSettings | null;
+  effective: ConventionSettings;
+  diagnostics: string[];
 };
 
 export type RuleSelectionReason = {

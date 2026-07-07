@@ -1,7 +1,10 @@
 use crate::RunCreateRequest;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use local_refactor_core::rule_selection::RuleSelectionPlan;
+use local_refactor_core::{
+    conventions::{ConventionSettings, PartialConventionSettings},
+    rule_selection::RuleSelectionPlan,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -43,6 +46,7 @@ pub struct RunRecord {
     pub repository_id: Option<String>,
     pub repository_root_path: Option<String>,
     pub target_relative_path: Option<String>,
+    pub convention_snapshot: Option<ConventionSettings>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -151,6 +155,13 @@ impl Database {
                 message TEXT NOT NULL,
                 FOREIGN KEY(run_id) REFERENCES runs(id)
             );
+
+            CREATE TABLE IF NOT EXISTS repository_convention_overrides (
+                repository_id TEXT PRIMARY KEY,
+                override_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(repository_id) REFERENCES repositories(id)
+            );
             "#,
         )?;
         ensure_column(&conn, "runs", "repository_id", "TEXT")?;
@@ -159,6 +170,7 @@ impl Database {
         ensure_column(&conn, "runs", "model", "TEXT")?;
         ensure_column(&conn, "runs", "metrics_json", "TEXT")?;
         ensure_column(&conn, "runs", "rule_selection_plan_json", "TEXT")?;
+        ensure_column(&conn, "runs", "convention_snapshot_json", "TEXT")?;
         ensure_column(&conn, "patches", "action", "TEXT NOT NULL DEFAULT 'update'")?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -232,10 +244,64 @@ impl Database {
     }
 
     pub fn delete_repository(&self, id: &str) -> Result<bool> {
-        let deleted = self
-            .conn()?
-            .execute("DELETE FROM repositories WHERE id = ?1", params![id])?;
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM repository_convention_overrides WHERE repository_id = ?1",
+            params![id],
+        )?;
+        let deleted = conn.execute("DELETE FROM repositories WHERE id = ?1", params![id])?;
         Ok(deleted > 0)
+    }
+
+    pub fn get_repository_convention_override(
+        &self,
+        repository_id: &str,
+    ) -> Result<Option<PartialConventionSettings>> {
+        let json: Option<String> = self
+            .conn()?
+            .query_row(
+                "SELECT override_json FROM repository_convention_overrides WHERE repository_id = ?1",
+                params![repository_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        json.map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn set_repository_convention_override(
+        &self,
+        repository_id: &str,
+        override_settings: &PartialConventionSettings,
+    ) -> Result<Option<PartialConventionSettings>> {
+        if self.get_repository(repository_id)?.is_none() {
+            return Ok(None);
+        }
+
+        if override_settings.is_empty() {
+            self.conn()?.execute(
+                "DELETE FROM repository_convention_overrides WHERE repository_id = ?1",
+                params![repository_id],
+            )?;
+            return Ok(Some(PartialConventionSettings::default()));
+        }
+
+        self.conn()?.execute(
+            r#"
+            INSERT INTO repository_convention_overrides (repository_id, override_json, updated_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(repository_id) DO UPDATE SET
+                override_json = excluded.override_json,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                repository_id,
+                serde_json::to_string(override_settings)?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(Some(override_settings.clone()))
     }
 
     fn repository_by_root(&self, root_path: &str) -> Result<Option<RepositoryRecord>> {
@@ -265,8 +331,9 @@ impl Database {
             INSERT INTO runs (
                 id, target_path, status, created_at, updated_at, rules_json,
                 test_file_mode, validation_json, protected_json, repository_id,
-                repository_root_path, target_relative_path, model, rule_selection_plan_json
-            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                repository_root_path, target_relative_path, model, rule_selection_plan_json,
+                convention_snapshot_json
+            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             "#,
             params![
                 id,
@@ -282,6 +349,11 @@ impl Database {
                 request.model,
                 request
                     .rule_selection_plan
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+                request
+                    .convention_snapshot
                     .as_ref()
                     .map(serde_json::to_string)
                     .transpose()?,
@@ -349,7 +421,7 @@ impl Database {
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
                        repository_id, repository_root_path, target_relative_path, model,
-                       rule_selection_plan_json
+                       rule_selection_plan_json, convention_snapshot_json
                 FROM runs
                 WHERE repository_id = ?1
                 ORDER BY created_at DESC
@@ -367,7 +439,7 @@ impl Database {
             SELECT id, target_path, status, created_at, updated_at, rules_json,
                    test_file_mode, validation_json, protected_json, validation_output, error,
                    repository_id, repository_root_path, target_relative_path, model,
-                   rule_selection_plan_json
+                   rule_selection_plan_json, convention_snapshot_json
             FROM runs
             ORDER BY created_at DESC
             LIMIT 100
@@ -385,7 +457,7 @@ impl Database {
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
                        repository_id, repository_root_path, target_relative_path, model,
-                       rule_selection_plan_json
+                       rule_selection_plan_json, convention_snapshot_json
                 FROM runs
                 WHERE id = ?1
                 "#,
@@ -517,6 +589,7 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     let validation_json: String = row.get(7)?;
     let protected_json: String = row.get(8)?;
     let rule_selection_plan_json: Option<String> = row.get(15)?;
+    let convention_snapshot_json: Option<String> = row.get(16)?;
 
     Ok(RunRecord {
         id: row.get(0)?,
@@ -537,5 +610,7 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
         repository_id: row.get(11)?,
         repository_root_path: row.get(12)?,
         target_relative_path: row.get(13)?,
+        convention_snapshot: convention_snapshot_json
+            .and_then(|json| serde_json::from_str(&json).ok()),
     })
 }

@@ -1,0 +1,8 @@
+{
+  "ruleId": "sort-rust-impl-members",
+  "language": "rust",
+  "positiveCases": ["basic-impl"],
+  "noEditCases": ["macro-present"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": []
+}

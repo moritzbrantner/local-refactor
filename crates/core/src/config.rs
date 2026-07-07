@@ -1,3 +1,4 @@
+use crate::conventions::{ConventionSettings, PartialConventionSettings};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ pub struct EffectiveConfig {
     pub protected_paths: Vec<String>,
     pub validation_commands: Vec<String>,
     pub test_file_mode: TestFileMode,
+    pub conventions: ConventionSettings,
 }
 
 impl Default for EffectiveConfig {
@@ -26,6 +28,7 @@ impl Default for EffectiveConfig {
             protected_paths: default_protected_paths(),
             validation_commands: Vec::new(),
             test_file_mode: TestFileMode::ReadOnly,
+            conventions: ConventionSettings::default(),
         }
     }
 }
@@ -44,6 +47,9 @@ impl EffectiveConfig {
         if let Some(test_file_mode) = layer.test_file_mode {
             self.test_file_mode = test_file_mode;
         }
+        if let Some(conventions) = layer.conventions {
+            self.conventions.apply_partial(conventions);
+        }
     }
 }
 
@@ -58,6 +64,8 @@ pub struct ConfigLayer {
     pub validation_commands: Option<Vec<String>>,
     #[serde(default)]
     pub test_file_mode: Option<TestFileMode>,
+    #[serde(default)]
+    pub conventions: Option<PartialConventionSettings>,
 }
 
 pub fn load_config_file(path: &Path) -> Result<ConfigLayer> {
@@ -112,6 +120,7 @@ mod tests {
 
         assert_eq!(config.rules, vec!["simplify-conditional"]);
         assert_eq!(config.test_file_mode, TestFileMode::ReadOnly);
+        assert!(config.conventions.typescript.formatter.enabled);
         assert!(config.protected_paths.contains(&"Cargo.lock".to_string()));
         assert!(config.protected_paths.contains(&"bun.lock".to_string()));
     }
@@ -134,5 +143,34 @@ mod tests {
         ] {
             assert!(protected.contains(&expected.to_string()), "{expected}");
         }
+    }
+
+    #[test]
+    fn config_layer_can_parse_conventions() {
+        let layer: ConfigLayer = toml::from_str(
+            r#"
+            [conventions]
+            profile = "custom"
+
+            [conventions.typescript.formatter]
+            enabled = false
+            requireConfig = true
+
+            [conventions.rust.ordering]
+            useItems = false
+            memberGroups = ["methods", "constants"]
+            "#,
+        )
+        .unwrap();
+
+        let mut config = EffectiveConfig::default();
+        config.apply_layer(layer);
+
+        assert!(!config.conventions.typescript.formatter.enabled);
+        assert!(!config.conventions.rust.ordering.use_items);
+        assert_eq!(
+            config.conventions.rust.ordering.member_groups,
+            vec!["methods".to_string(), "constants".to_string()]
+        );
     }
 }

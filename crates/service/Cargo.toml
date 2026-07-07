@@ -18,6 +18,8 @@ sha2 = "0.10"
 futures-util = "0.3"
 tokio.workspace = true
 tower-http = { version = "0.6", features = ["cors", "trace"] }
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true

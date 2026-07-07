@@ -5,6 +5,7 @@ import { inlineTrivialHelper } from "./inline-trivial-helper";
 import { normalizeImports } from "./normalize-imports";
 import { simplifyBooleanReturnConditionals } from "./simplify-conditional";
 import { sortIndependentDeclarations } from "./sort-independent-declarations";
+import { sortTypeScriptClassMembers } from "./sort-typescript-class-members";
 import type { DeterministicRule } from "./types";
 
 export const deterministicRules: Record<string, DeterministicRule> = {
@@ -14,5 +15,6 @@ export const deterministicRules: Record<string, DeterministicRule> = {
   "inline-trivial-helper": inlineTrivialHelper,
   "normalize-imports": normalizeImports,
   "sort-independent-declarations": sortIndependentDeclarations,
+  "sort-typescript-class-members": sortTypeScriptClassMembers,
   "improve-local-name": improveLocalName,
 };

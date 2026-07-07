@@ -50,6 +50,7 @@ const categories = new Set([
   "type-structure",
   "declaration-organization",
   "documentation",
+  "formatting",
 ]);
 const statuses = new Set([
   "cataloged",
@@ -269,7 +270,7 @@ function validateRunSupportedMarkers(catalogs: Catalog[]) {
   for (const entry of entries) {
     if (entry.status !== "run-supported") continue;
     const marker = new RegExp(
-      `assert_(?:rust_)?run_supported_rule\\s*\\(\\s*"${escapeRegExp(entry.id)}"`,
+      `assert_(?:rust_)?(?:run_supported_rule|deterministic_rule)\\s*\\(\\s*"${escapeRegExp(entry.id)}"`,
     );
     if (!marker.test(runLifecycle)) {
       add(`${entry.id}: run-supported entry is missing service test marker`);

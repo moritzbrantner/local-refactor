@@ -64,6 +64,7 @@ pub enum RuleCategory {
     TypeStructure,
     DeclarationOrganization,
     Documentation,
+    Formatting,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -142,6 +143,25 @@ pub struct RuleDefinition {
 }
 
 pub const INITIAL_RULES: &[RuleDefinition] = &[
+    RuleDefinition {
+        id: "format-typescript",
+        language: Language::TypeScript,
+        name: "Format TypeScript",
+        description:
+            "Formats TypeScript and JavaScript files using the project's configured formatter.",
+        execution_kind: RuleExecutionKind::Deterministic,
+        allowed_writes: AllowedWrites::SingleFile,
+        category: RuleCategory::Formatting,
+        safety_level: SafetyLevel::SyntaxOnly,
+        preserves: &[
+            PreservedProperty::RuntimeBehavior,
+            PreservedProperty::Typecheck,
+            PreservedProperty::FormattingIntent,
+        ],
+        requires_type_information: false,
+        requires_import_graph: false,
+        planning_profile: PlanningProfile::LocalTransformation,
+    },
     RuleDefinition {
         id: "split-oversized-function",
         language: Language::TypeScript,
@@ -336,6 +356,24 @@ pub const INITIAL_RULES: &[RuleDefinition] = &[
         planning_profile: PlanningProfile::LocalTransformation,
     },
     RuleDefinition {
+        id: "sort-typescript-class-members",
+        language: Language::TypeScript,
+        name: "Sort TypeScript Class Members",
+        description: "Reorders class members inside conservative safe groups.",
+        execution_kind: RuleExecutionKind::Deterministic,
+        allowed_writes: AllowedWrites::SingleFile,
+        category: RuleCategory::DeclarationOrganization,
+        safety_level: SafetyLevel::TypecheckRequired,
+        preserves: &[
+            PreservedProperty::RuntimeBehavior,
+            PreservedProperty::Typecheck,
+            PreservedProperty::FormattingIntent,
+        ],
+        requires_type_information: false,
+        requires_import_graph: false,
+        planning_profile: PlanningProfile::LocalTransformation,
+    },
+    RuleDefinition {
         id: "extract-parameter-object",
         language: Language::TypeScript,
         name: "Extract Parameter Object",
@@ -372,6 +410,61 @@ pub const INITIAL_RULES: &[RuleDefinition] = &[
         requires_type_information: false,
         requires_import_graph: false,
         planning_profile: PlanningProfile::DocumentationOnly,
+    },
+    RuleDefinition {
+        id: "format-rust",
+        language: Language::Rust,
+        name: "Format Rust",
+        description: "Formats Rust files using the project's configured rustfmt settings.",
+        execution_kind: RuleExecutionKind::Deterministic,
+        allowed_writes: AllowedWrites::SingleFile,
+        category: RuleCategory::Formatting,
+        safety_level: SafetyLevel::SyntaxOnly,
+        preserves: &[
+            PreservedProperty::RuntimeBehavior,
+            PreservedProperty::Typecheck,
+            PreservedProperty::FormattingIntent,
+        ],
+        requires_type_information: false,
+        requires_import_graph: false,
+        planning_profile: PlanningProfile::LocalTransformation,
+    },
+    RuleDefinition {
+        id: "sort-rust-use-items",
+        language: Language::Rust,
+        name: "Sort Rust Use Items",
+        description:
+            "Sorts simple contiguous Rust use items when macros and parse errors are absent.",
+        execution_kind: RuleExecutionKind::Deterministic,
+        allowed_writes: AllowedWrites::SingleFile,
+        category: RuleCategory::ModuleOrganization,
+        safety_level: SafetyLevel::TypecheckRequired,
+        preserves: &[
+            PreservedProperty::RuntimeBehavior,
+            PreservedProperty::Typecheck,
+            PreservedProperty::FormattingIntent,
+        ],
+        requires_type_information: false,
+        requires_import_graph: false,
+        planning_profile: PlanningProfile::LocalTransformation,
+    },
+    RuleDefinition {
+        id: "sort-rust-impl-members",
+        language: Language::Rust,
+        name: "Sort Rust Impl Members",
+        description: "Reorders Rust impl members inside conservative safe groups.",
+        execution_kind: RuleExecutionKind::Deterministic,
+        allowed_writes: AllowedWrites::SingleFile,
+        category: RuleCategory::DeclarationOrganization,
+        safety_level: SafetyLevel::TypecheckRequired,
+        preserves: &[
+            PreservedProperty::RuntimeBehavior,
+            PreservedProperty::Typecheck,
+            PreservedProperty::FormattingIntent,
+        ],
+        requires_type_information: false,
+        requires_import_graph: false,
+        planning_profile: PlanningProfile::LocalTransformation,
     },
     RuleDefinition {
         id: "rust-extract-helper-function",

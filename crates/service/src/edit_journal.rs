@@ -185,6 +185,7 @@ mod tests {
             protected_paths: Vec::new(),
             repair_budget: 2,
             expected_deterministic_preview_fingerprint: None,
+            convention_snapshot: None,
         };
         db.insert_run("run-1", &request).unwrap();
     }

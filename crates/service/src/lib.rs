@@ -1,4 +1,5 @@
 mod analyzer;
+mod convention_executor;
 mod db;
 mod deterministic_preview;
 mod diff;
@@ -22,7 +23,8 @@ use axum::{
     Json, Router,
 };
 use local_refactor_core::{
-    config::{ConfigLayer, TestFileMode},
+    config::{find_project_config, load_config_file, ConfigLayer, TestFileMode},
+    conventions::{ConventionSettings, PartialConventionSettings},
     rule_selection::RuleSelectionPlan,
     rules::{rule_by_id, Language, RuleExecutionKind, INITIAL_RULES},
 };
@@ -152,6 +154,8 @@ pub struct RunCreateRequest {
     repair_budget: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expected_deterministic_preview_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    convention_snapshot: Option<ConventionSettings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +199,16 @@ struct RepositoryCreateRequest {
 #[serde(rename_all = "camelCase")]
 struct RepositoryUpdateRequest {
     label: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryConventionsResponse {
+    repository_id: String,
+    project_config: Option<ConventionSettings>,
+    local_override: Option<PartialConventionSettings>,
+    effective: ConventionSettings,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -346,6 +360,14 @@ pub fn router(state: ServiceState) -> Router {
             patch(update_repository).delete(delete_repository),
         )
         .route("/api/repositories/{id}/folders", get(repository_folders))
+        .route(
+            "/api/repositories/{id}/conventions",
+            get(repository_conventions),
+        )
+        .route(
+            "/api/repositories/{id}/conventions/local-override",
+            patch(update_repository_convention_override),
+        )
         .route(
             "/api/repositories/{id}/file-preview",
             get(repository_file_preview),
@@ -580,6 +602,45 @@ async fn repository_folders(
             entries,
         })
         .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn repository_conventions(
+    State(state): State<ServiceState>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match repository_conventions_response(&state.db, &id) {
+        Ok(Some(response)) => Json(response).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn update_repository_convention_override(
+    State(state): State<ServiceState>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<PartialConventionSettings>,
+) -> impl IntoResponse {
+    match state.db.set_repository_convention_override(&id, &request) {
+        Ok(Some(_)) => match repository_conventions_response(&state.db, &id) {
+            Ok(Some(response)) => Json(response).into_response(),
+            Ok(None) => StatusCode::NOT_FOUND.into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        },
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -1172,6 +1233,113 @@ fn repository_label_from_root(root: &Path) -> String {
         .to_string()
 }
 
+fn repository_conventions_response(
+    db: &Database,
+    repository_id: &str,
+) -> Result<Option<RepositoryConventionsResponse>> {
+    let Some(repository) = db.get_repository(repository_id)? else {
+        return Ok(None);
+    };
+    let root = std::fs::canonicalize(&repository.root_path)
+        .with_context(|| format!("repository path is unavailable: {}", repository.root_path))?;
+    let project_config = project_convention_settings(&root)?;
+    let local_override = db.get_repository_convention_override(repository_id)?;
+    let mut effective = project_config.clone().unwrap_or_default();
+    if let Some(override_settings) = local_override.clone() {
+        effective.apply_partial(override_settings);
+    }
+    let diagnostics = convention_diagnostics(&root, &effective);
+
+    Ok(Some(RepositoryConventionsResponse {
+        repository_id: repository_id.to_string(),
+        project_config,
+        local_override,
+        effective,
+        diagnostics,
+    }))
+}
+
+fn project_convention_settings(root: &Path) -> Result<Option<ConventionSettings>> {
+    let Some(config_path) = find_project_config(root) else {
+        return Ok(None);
+    };
+    let layer = load_config_file(&config_path)?;
+    let Some(conventions) = layer.conventions else {
+        return Ok(None);
+    };
+    let mut settings = ConventionSettings::default();
+    settings.apply_partial(conventions);
+    Ok(Some(settings))
+}
+
+fn convention_diagnostics(root: &Path, settings: &ConventionSettings) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    if settings.typescript.formatter.enabled {
+        if settings.typescript.formatter.require_config && find_prettier_config(root).is_none() {
+            diagnostics.push(
+                "TypeScript formatter requires a Prettier config, but none was found.".to_string(),
+            );
+        }
+        if find_prettier_command(root).is_none() {
+            diagnostics.push(
+                "TypeScript formatter command was not found; install prettier locally or on PATH."
+                    .to_string(),
+            );
+        }
+    }
+    if settings.rust.formatter.enabled {
+        if settings.rust.formatter.require_config && find_rustfmt_config(root).is_none() {
+            diagnostics.push(
+                "Rust formatter requires rustfmt.toml or .rustfmt.toml, but none was found."
+                    .to_string(),
+            );
+        }
+        if find_command_on_path("rustfmt").is_none() {
+            diagnostics.push("rustfmt command was not found on PATH.".to_string());
+        }
+    }
+    diagnostics
+}
+
+fn find_prettier_config(root: &Path) -> Option<PathBuf> {
+    [
+        ".prettierrc",
+        ".prettierrc.json",
+        ".prettierrc.yml",
+        ".prettierrc.yaml",
+        ".prettierrc.toml",
+        "prettier.config.js",
+        "prettier.config.cjs",
+        "prettier.config.mjs",
+        "prettier.config.ts",
+    ]
+    .into_iter()
+    .map(|name| root.join(name))
+    .find(|path| path.exists())
+}
+
+fn find_prettier_command(root: &Path) -> Option<PathBuf> {
+    let local = root.join("node_modules/.bin/prettier");
+    if local.exists() {
+        return Some(local);
+    }
+    find_command_on_path("prettier")
+}
+
+fn find_rustfmt_config(root: &Path) -> Option<PathBuf> {
+    ["rustfmt.toml", ".rustfmt.toml"]
+        .into_iter()
+        .map(|name| root.join(name))
+        .find(|path| path.exists())
+}
+
+fn find_command_on_path(command: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|path| path.join(command))
+        .find(|path| path.exists())
+}
+
 #[derive(Debug)]
 enum FilePreviewError {
     NotFound,
@@ -1434,6 +1602,7 @@ mod tests {
             protected_paths: Vec::new(),
             repair_budget: 2,
             expected_deterministic_preview_fingerprint: None,
+            convention_snapshot: None,
         }
     }
 
@@ -1520,6 +1689,7 @@ mod tests {
             protected_paths: Vec::new(),
             repair_budget: 2,
             expected_deterministic_preview_fingerprint: None,
+            convention_snapshot: None,
         };
         db.insert_run("run-1", &request).unwrap();
 
@@ -1555,6 +1725,7 @@ mod tests {
                 protected_paths: Vec::new(),
                 repair_budget: 2,
                 expected_deterministic_preview_fingerprint: None,
+                convention_snapshot: None,
             },
         )
         .unwrap();
@@ -1650,6 +1821,7 @@ validationCommands = ["echo default validation"]
                 protected_paths: Vec::new(),
                 repair_budget: 2,
                 expected_deterministic_preview_fingerprint: None,
+                convention_snapshot: None,
             },
         )
         .unwrap_err();

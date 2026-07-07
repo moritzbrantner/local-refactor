@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { API_BASE_URL, api } from "./api";
 import {
+  ConventionsPage,
   FoldersPanel,
   RepositoriesPanel,
   RuleSelectionPanel,
@@ -35,6 +36,7 @@ import type {
   AnalyzerEdit,
   AnalyzerResponse,
   CandidateFilePreviewResponse,
+  ConventionSettings,
   DeterministicPreviewResponse,
   FolderChildrenResponse,
   FolderEntry,
@@ -43,6 +45,7 @@ import type {
   RepositoryPickResponse,
   RepositoryRecord,
   RepositoryFilePreviewResponse,
+  RepositoryConventionsResponse,
   Rule,
   RuleSelectionPlan,
   RuleSelectionPlanResponse,
@@ -119,6 +122,13 @@ function App() {
   const [message, setMessage] = useState("");
   const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(false);
   const [foldersCollapsed, setFoldersCollapsed] = useState(false);
+  const [activePage, setActivePage] = useState<"runs" | "conventions">("runs");
+  const [repositoryConventions, setRepositoryConventions] =
+    useState<RepositoryConventionsResponse | null>(null);
+  const [conventionDraft, setConventionDraft] = useState<ConventionSettings | null>(null);
+  const [conventionsLoading, setConventionsLoading] = useState(false);
+  const [conventionsSaving, setConventionsSaving] = useState(false);
+  const [conventionsError, setConventionsError] = useState("");
 
   const selectedRepository = useMemo(
     () => repositories.find((repository) => repository.id === selectedRepositoryId) ?? null,
@@ -230,6 +240,24 @@ function App() {
     }));
   }
 
+  async function loadConventions(repositoryId: string) {
+    setConventionsLoading(true);
+    setConventionsError("");
+    try {
+      const response = await api.get<RepositoryConventionsResponse>(
+        `/api/repositories/${repositoryId}/conventions`,
+      );
+      setRepositoryConventions(response);
+      setConventionDraft(response.effective);
+    } catch (error) {
+      setRepositoryConventions(null);
+      setConventionDraft(null);
+      setConventionsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConventionsLoading(false);
+    }
+  }
+
   useEffect(() => {
     refresh().catch((error) => setMessage(error.message));
     const timer = window.setInterval(() => {
@@ -251,8 +279,12 @@ function App() {
     setExpandedFolders(new Set([ROOT_PATH]));
     setSelectedTargetRelativePath(ROOT_PATH);
     setRuleSelectionPlan(null);
+    setRepositoryConventions(null);
+    setConventionDraft(null);
+    setConventionsError("");
     if (!selectedRepositoryId) return;
     loadFolder(selectedRepositoryId, ROOT_PATH).catch((error) => setMessage(error.message));
+    loadConventions(selectedRepositoryId).catch((error) => setConventionsError(error.message));
   }, [selectedRepositoryId]);
 
   useEffect(() => {
@@ -498,6 +530,42 @@ function App() {
       setSelectedRepositoryId(nextRepositoryId);
     }
     await refresh(selectedRepositoryId === repositoryId ? nextRepositoryId : selectedRepositoryId);
+  }
+
+  async function saveConventionOverride() {
+    if (!selectedRepositoryId || !conventionDraft) return;
+    setConventionsSaving(true);
+    setConventionsError("");
+    try {
+      const response = await api.patch<RepositoryConventionsResponse>(
+        `/api/repositories/${selectedRepositoryId}/conventions/local-override`,
+        conventionDraft,
+      );
+      setRepositoryConventions(response);
+      setConventionDraft(response.effective);
+    } catch (error) {
+      setConventionsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConventionsSaving(false);
+    }
+  }
+
+  async function resetConventionOverride() {
+    if (!selectedRepositoryId) return;
+    setConventionsSaving(true);
+    setConventionsError("");
+    try {
+      const response = await api.patch<RepositoryConventionsResponse>(
+        `/api/repositories/${selectedRepositoryId}/conventions/local-override`,
+        {},
+      );
+      setRepositoryConventions(response);
+      setConventionDraft(response.effective);
+    } catch (error) {
+      setConventionsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConventionsSaving(false);
+    }
   }
 
   async function toggleFolder(relativePath: string) {
@@ -780,6 +848,20 @@ function App() {
     } rules`;
   }
 
+  function selectedConventionRules() {
+    return effectiveRuleRecords.filter((rule) =>
+      [
+        "format-typescript",
+        "format-rust",
+        "sort-typescript-class-members",
+        "sort-rust-use-items",
+        "sort-rust-impl-members",
+        "normalize-imports",
+        "sort-independent-declarations",
+      ].includes(rule.id),
+    );
+  }
+
   function renderCandidateFilePreview(
     preview: CandidateFilePreviewResponse,
     options: { interactive?: boolean } = {},
@@ -811,6 +893,24 @@ function App() {
           <h1>local-refactor</h1>
           <p>Local service for scoped, behavior-preserving refactors.</p>
         </div>
+        <nav className="topnav" aria-label="Primary">
+          <button
+            type="button"
+            className={activePage === "runs" ? "selected" : ""}
+            onClick={() => setActivePage("runs")}
+          >
+            <Activity size={16} />
+            Runs
+          </button>
+          <button
+            type="button"
+            className={activePage === "conventions" ? "selected" : ""}
+            onClick={() => setActivePage("conventions")}
+          >
+            <Shield size={16} />
+            Conventions
+          </button>
+        </nav>
         <button className="icon-button" onClick={() => refresh()} title="Refresh">
           <RefreshCcw size={18} />
         </button>
@@ -860,7 +960,30 @@ function App() {
           onSelectTarget={setSelectedTargetRelativePath}
         />
 
+        {activePage === "conventions" ? (
+          <ConventionsPage
+            selectedRepository={selectedRepository}
+            conventions={repositoryConventions}
+            draft={conventionDraft}
+            loading={conventionsLoading}
+            saving={conventionsSaving}
+            error={conventionsError}
+            onChangeDraft={setConventionDraft}
+            onSave={() => saveConventionOverride().catch((error) => setMessage(error.message))}
+            onReset={() => resetConventionOverride().catch((error) => setMessage(error.message))}
+          />
+        ) : (
         <RunsPanelShell>
+          {selectedConventionRules().length > 0 && repositoryConventions && (
+            <section className="convention-run-summary">
+              <h3>Convention Settings</h3>
+              <p>
+                {repositoryConventions.effective.profile} profile, TypeScript formatter{" "}
+                {repositoryConventions.effective.typescript.formatter.enabled ? "on" : "off"}, Rust formatter{" "}
+                {repositoryConventions.effective.rust.formatter.enabled ? "on" : "off"}.
+              </p>
+            </section>
+          )}
           <RunConfigurationForm
             selectedTargetRelativePath={selectedTargetRelativePath}
             selectedModel={selectedModel}
@@ -963,6 +1086,7 @@ function App() {
             />
           </div>
         </RunsPanelShell>
+        )}
       </section>
     </main>
   );

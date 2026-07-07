@@ -2,6 +2,21 @@
   "language": "typescript",
   "entries": [
     {
+      "id": "format-typescript",
+      "language": "typescript",
+      "name": "Format TypeScript",
+      "category": "formatting",
+      "status": "deterministic-rule",
+      "planningProfile": "local-transformation",
+      "safetyLevel": "syntax-only",
+      "preserves": ["runtime-behavior", "typecheck", "formatting-intent"],
+      "allowedWrites": "single-file",
+      "requiresTypeInformation": false,
+      "requiresImportGraph": false,
+      "fixtureDirectory": "refactoring-catalog/typescript-fixtures/format-typescript",
+      "description": "Formats TypeScript and JavaScript files using the project's configured formatter."
+    },
+    {
       "id": "simplify-conditional",
       "language": "typescript",
       "name": "Simplify Conditional",
@@ -172,6 +187,21 @@
       "requiresImportGraph": true,
       "fixtureDirectory": "workers/typescript-analyzer/test-fixtures/normalize-imports",
       "description": "Groups or removes duplicate imports without changing imported bindings."
+    },
+    {
+      "id": "sort-typescript-class-members",
+      "language": "typescript",
+      "name": "Sort TypeScript Class Members",
+      "category": "declaration-organization",
+      "status": "run-supported",
+      "planningProfile": "local-transformation",
+      "safetyLevel": "typecheck-required",
+      "preserves": ["runtime-behavior", "typecheck", "formatting-intent"],
+      "allowedWrites": "single-file",
+      "requiresTypeInformation": false,
+      "requiresImportGraph": false,
+      "fixtureDirectory": "workers/typescript-analyzer/test-fixtures/sort-typescript-class-members",
+      "description": "Reorders class members inside conservative safe groups."
     },
     {
       "id": "extract-parameter-object",

@@ -132,6 +132,38 @@ testFileMode = "readOnly"
 
 Run settings from the web UI override global and project settings.
 
+Project convention settings can also define deterministic formatter and ordering
+behavior. The browser UI exposes a separate Conventions page for a selected
+Repository Source; project config is the reproducible baseline, and local UI
+overrides are stored in local-refactor's SQLite database for that Repository
+Source. Applied deterministic runs store the effective convention snapshot used
+for their preview fingerprint.
+
+```toml
+[conventions]
+profile = "standard"
+
+[conventions.typescript.formatter]
+enabled = true
+requireConfig = true
+
+[conventions.typescript.ordering]
+imports = true
+classMembers = true
+memberGroups = ["static-fields", "fields", "constructors", "methods"]
+alphabeticalWithinGroups = true
+
+[conventions.rust.formatter]
+enabled = true
+requireConfig = true
+
+[conventions.rust.ordering]
+useItems = true
+implMembers = true
+memberGroups = ["associated-types", "constants", "constructors", "methods"]
+alphabeticalWithinGroups = true
+```
+
 Preview the automatic plan:
 
 ```http
@@ -157,6 +189,18 @@ Apply a reviewed deterministic preview:
 
 ```http
 POST /api/runs/deterministic-preview/apply
+```
+
+Read effective conventions for a Repository Source:
+
+```http
+GET /api/repositories/:id/conventions
+```
+
+Save a local Repository Source convention override:
+
+```http
+PATCH /api/repositories/:id/conventions/local-override
 ```
 
 Model-planned or mixed rule selections use the existing `/api/runs` flow and

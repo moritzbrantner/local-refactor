@@ -57,6 +57,35 @@ button:disabled {
   font-size: 14px;
 }
 
+.topnav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.topnav button,
+.convention-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topnav button {
+  border: 1px solid #c8d0d8;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fbfcfd;
+  color: #334155;
+  cursor: pointer;
+}
+
+.topnav button.selected {
+  border-color: #1f7a5a;
+  background: #eef8f3;
+  color: #165a43;
+  font-weight: 700;
+}
+
 .workspace {
   --repositories-column: minmax(280px, 340px);
   --folders-column: minmax(280px, 380px);
@@ -81,6 +110,122 @@ button:disabled {
   border-radius: 8px;
   background: #ffffff;
   padding: 16px;
+}
+
+.conventions-page,
+.runs-panel {
+  min-width: 0;
+}
+
+.convention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.convention-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.convention-grid fieldset,
+.convention-layers details,
+.convention-run-summary,
+.diagnostics {
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.convention-grid fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+}
+
+.convention-grid legend {
+  padding: 0 4px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.convention-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.checkbox-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.field-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.diagnostics {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px;
+  color: #8a4b00;
+  background: #fff9ed;
+}
+
+.diagnostics p {
+  margin: 0;
+}
+
+.convention-layers {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.convention-layers details {
+  padding: 10px;
+}
+
+.convention-layers summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.convention-layers pre {
+  overflow: auto;
+  max-height: 260px;
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.convention-run-summary {
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.convention-run-summary h3,
+.convention-run-summary p {
+  margin: 0;
+}
+
+.convention-run-summary h3 {
+  font-size: 14px;
+}
+
+.convention-run-summary p {
+  color: #5c6773;
+  font-size: 13px;
 }
 
 .panel-title {

@@ -216,6 +216,19 @@ async fn sort_independent_declarations_satisfies_run_supported_contract() {
 }
 
 #[tokio::test]
+async fn sort_typescript_class_members_satisfies_run_supported_contract() {
+    assert_run_supported_rule(
+        "sort-typescript-class-members",
+        RunFixture {
+            source: unsorted_class_members_source(),
+            expected_content: "static label: string;\n\n  readonly id: string;",
+            validation_commands: vec!["grep -q 'static label' src/sample.ts"],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn improve_local_name_satisfies_run_supported_contract() {
     assert_run_supported_rule(
         "improve-local-name",
@@ -528,6 +541,26 @@ async fn rust_add_documentation_comments_satisfies_run_supported_contract() {
     .await;
 }
 
+#[tokio::test]
+async fn sort_rust_use_items_satisfies_run_supported_contract() {
+    assert_rust_deterministic_rule(
+        "sort-rust-use-items",
+        rust_unsorted_use_source(),
+        "use crate::alpha;",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn sort_rust_impl_members_satisfies_run_supported_contract() {
+    assert_rust_deterministic_rule(
+        "sort-rust-impl-members",
+        rust_unsorted_impl_source(),
+        "    pub const LABEL: &'static str = \"summary\";",
+    )
+    .await;
+}
+
 async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
     let harness = Harness::new();
     let sample = harness.repo.path().join("src/sample.ts");
@@ -611,6 +644,46 @@ async fn assert_run_supported_rule(rule_id: &str, fixture: RunFixture) {
             "missing event containing {expected:?}: {event_messages:#?}"
         );
     }
+}
+
+async fn assert_rust_deterministic_rule(
+    rule_id: &str,
+    source: &'static str,
+    expected_content: &str,
+) {
+    let harness = Harness::new();
+    let lib = harness.repo.path().join("src/lib.rs");
+    let test_file = harness.repo.path().join("tests/integration.rs");
+    std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(test_file.parent().unwrap()).unwrap();
+    std::fs::write(&lib, source).unwrap();
+    std::fs::write(&test_file, source).unwrap();
+
+    let created = harness
+        .post_json(
+            "/api/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": [rule_id],
+                "testFileMode": "readOnly",
+                "validationCommands": ["true"]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap().to_string();
+
+    let run = harness.poll_run(&run_id, "succeeded").await;
+    assert_eq!(run["status"], "succeeded");
+    assert!(std::fs::read_to_string(&lib)
+        .unwrap()
+        .contains(expected_content));
+    assert_eq!(std::fs::read_to_string(&test_file).unwrap(), source);
+
+    let diff = harness.get_json(&format!("/api/runs/{run_id}/diff")).await;
+    assert_eq!(diff.status, StatusCode::OK);
+    assert_eq!(diff.json["files"].as_array().unwrap().len(), 1);
+    assert_eq!(diff.json["files"][0]["ruleId"], rule_id);
 }
 
 async fn assert_rust_run_supported_rule(rule_id: &str, expected_content: &str) {
@@ -859,7 +932,7 @@ async fn deterministic_preview_rejects_mixed_rule_sets() {
     assert!(preview.json["error"]
         .as_str()
         .unwrap()
-        .contains("deterministic TypeScript rules"));
+        .contains("Deterministic Preview only supports deterministic rules"));
 }
 
 #[tokio::test]
@@ -1125,6 +1198,141 @@ async fn repository_source_run_resolves_target_folder_and_records_context() {
         .unwrap()
         .contains("return value;"));
     assert_eq!(std::fs::read_to_string(&sibling).unwrap(), sibling_original);
+}
+
+#[tokio::test]
+async fn repository_conventions_merge_project_config_and_local_override() {
+    let harness = Harness::new_git_repo();
+    std::fs::write(
+        harness.repo.path().join("refactor-rules.toml"),
+        r#"
+[conventions]
+profile = "minimal"
+
+[conventions.typescript.formatter]
+enabled = false
+
+[conventions.rust.formatter]
+enabled = false
+"#,
+    )
+    .unwrap();
+
+    let repository = harness
+        .post_json(
+            "/api/repositories",
+            json!({ "path": harness.repo.path().to_string_lossy() }),
+        )
+        .await;
+    let repository_id = repository.json["id"].as_str().unwrap();
+
+    let initial = harness
+        .get_json(&format!("/api/repositories/{repository_id}/conventions"))
+        .await;
+    assert_eq!(initial.status, StatusCode::OK);
+    assert_eq!(initial.json["projectConfig"]["profile"], "minimal");
+    assert_eq!(initial.json["effective"]["profile"], "minimal");
+    assert_eq!(
+        initial.json["effective"]["typescript"]["formatter"]["enabled"],
+        false
+    );
+
+    let updated = harness
+        .patch_json(
+            &format!("/api/repositories/{repository_id}/conventions/local-override"),
+            json!({
+                "profile": "custom",
+                "typescript": {
+                    "ordering": {
+                        "classMembers": false
+                    }
+                }
+            }),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK);
+    assert_eq!(updated.json["localOverride"]["profile"], "custom");
+    assert_eq!(updated.json["effective"]["profile"], "custom");
+    assert_eq!(
+        updated.json["effective"]["typescript"]["ordering"]["classMembers"],
+        false
+    );
+    assert_eq!(
+        updated.json["effective"]["typescript"]["formatter"]["enabled"],
+        false
+    );
+
+    let reset = harness
+        .patch_json(
+            &format!("/api/repositories/{repository_id}/conventions/local-override"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK);
+    assert_eq!(reset.json["effective"]["profile"], "minimal");
+    assert_eq!(
+        reset.json["effective"]["typescript"]["ordering"]["classMembers"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn deterministic_preview_fingerprint_and_run_snapshot_include_conventions() {
+    let harness = Harness::new_git_repo();
+    let sample = harness.repo.path().join("src/sample.ts");
+    std::fs::create_dir_all(sample.parent().unwrap()).unwrap();
+    std::fs::write(&sample, unsorted_class_members_source()).unwrap();
+
+    let repository = harness
+        .post_json(
+            "/api/repositories",
+            json!({ "path": harness.repo.path().to_string_lossy() }),
+        )
+        .await;
+    let repository_id = repository.json["id"].as_str().unwrap();
+    let run_request = json!({
+        "repositoryId": repository_id,
+        "targetRelativePath": "src",
+        "rules": ["sort-typescript-class-members"],
+        "validationCommands": ["true"]
+    });
+
+    let first_preview = harness
+        .post_json("/api/runs/deterministic-preview", run_request.clone())
+        .await;
+    assert_eq!(first_preview.status, StatusCode::OK);
+
+    let updated = harness
+        .patch_json(
+            &format!("/api/repositories/{repository_id}/conventions/local-override"),
+            json!({ "profile": "custom" }),
+        )
+        .await;
+    assert_eq!(updated.status, StatusCode::OK);
+
+    let second_preview = harness
+        .post_json("/api/runs/deterministic-preview", run_request.clone())
+        .await;
+    assert_eq!(second_preview.status, StatusCode::OK);
+    assert_ne!(
+        first_preview.json["previewFingerprint"],
+        second_preview.json["previewFingerprint"]
+    );
+
+    let created = harness
+        .post_json(
+            "/api/runs/deterministic-preview/apply",
+            json!({
+                "run": run_request,
+                "previewFingerprint": second_preview.json["previewFingerprint"]
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap();
+    let run = harness.poll_run(run_id, "succeeded").await;
+
+    assert_eq!(run["conventionSnapshot"]["profile"], "custom");
 }
 
 #[tokio::test]
@@ -1687,6 +1895,10 @@ impl Harness {
         self.request_json(Method::POST, uri, Some(body)).await
     }
 
+    async fn patch_json(&self, uri: &str, body: Value) -> TestResponse {
+        self.request_json(Method::PATCH, uri, Some(body)).await
+    }
+
     async fn get_json(&self, uri: &str) -> TestResponse {
         self.request_json(Method::GET, uri, None).await
     }
@@ -1801,6 +2013,10 @@ fn unsorted_declarations_source() -> &'static str {
     "const zebra = \"z\";\nconst alpha = \"a\";\nconst middle = \"m\";\n\nexport function label() {\n  return `${alpha}${middle}${zebra}`;\n}\n"
 }
 
+fn unsorted_class_members_source() -> &'static str {
+    "export class CartSummary {\n  total() {\n    return this.count;\n  }\n\n  static label: string;\n\n  constructor(private readonly count: number) {}\n\n  readonly id: string;\n\n  describe() {\n    return `${this.id}:${this.count}`;\n  }\n}\n"
+}
+
 fn cart_summary_source() -> &'static str {
     "export function summarizeCart(items: Array<{ price: number }>) {\n  const x = items.length;\n  const y = items.reduce((total, item) => total + item.price, 0);\n  return { itemCount: x, subtotal: y };\n}\n"
 }
@@ -1827,6 +2043,14 @@ fn parameter_list_source() -> &'static str {
 
 fn rust_invoice_source() -> &'static str {
     "pub fn calculate_invoice_total(items: &[(u32, u32)], discount_cents: u32) -> u32 {\n    let mut total = 0;\n    for &(price, quantity) in items {\n        total += price * quantity;\n    }\n    total.saturating_sub(discount_cents)\n}\n"
+}
+
+fn rust_unsorted_use_source() -> &'static str {
+    "use crate::beta;\nuse crate::alpha;\n\npub fn value() -> u32 {\n    1\n}\n"
+}
+
+fn rust_unsorted_impl_source() -> &'static str {
+    "pub struct Summary;\n\nimpl Summary {\n    pub fn total() -> u32 { 1 }\n    pub const LABEL: &'static str = \"summary\";\n    pub fn new() -> Self { Self }\n}\n"
 }
 
 fn documentation_patch_plan_for_request(

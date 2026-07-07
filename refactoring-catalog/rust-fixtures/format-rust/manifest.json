@@ -1,0 +1,8 @@
+{
+  "ruleId": "format-rust",
+  "language": "rust",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": ["requires rustfmt and project formatter config"]
+}

@@ -13,13 +13,16 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Shield,
   Trash2,
 } from "lucide-react";
 import type {
   CandidateFilePreviewResponse,
+  ConventionSettings,
   FolderEntry,
   ModelSummary,
+  RepositoryConventionsResponse,
   RepositoryRecord,
   Rule,
   RuleSelectionPlan,
@@ -38,6 +41,294 @@ import {
   runTargetLabel,
 } from "../view-helpers";
 import { CandidateFilePreview } from "./previews";
+
+export type ConventionsPageProps = {
+  selectedRepository: RepositoryRecord | null;
+  conventions: RepositoryConventionsResponse | null;
+  draft: ConventionSettings | null;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  onChangeDraft: (draft: ConventionSettings) => void;
+  onSave: () => void;
+  onReset: () => void;
+};
+
+export function ConventionsPage({
+  selectedRepository,
+  conventions,
+  draft,
+  loading,
+  saving,
+  error,
+  onChangeDraft,
+  onSave,
+  onReset,
+}: ConventionsPageProps) {
+  if (!selectedRepository) {
+    return (
+      <section className="panel conventions-page">
+        <div className="panel-title">
+          <Shield size={18} />
+          <h2>Conventions</h2>
+        </div>
+        <p className="empty">Select a repository.</p>
+      </section>
+    );
+  }
+
+  const settings = draft ?? conventions?.effective ?? null;
+
+  return (
+    <section className="panel conventions-page">
+      <div className="panel-title">
+        <Shield size={18} />
+        <h2>Conventions</h2>
+      </div>
+      <div className="selected-source">
+        <strong>{selectedRepository.label}</strong>
+        <span>{selectedRepository.rootPath}</span>
+      </div>
+      {loading && <p className="empty">Loading conventions.</p>}
+      {error && <small className="field-error">{error}</small>}
+      {settings && (
+        <>
+          <div className="convention-actions">
+            <button type="button" className="primary" onClick={onSave} disabled={saving}>
+              <Save size={16} />
+              {saving ? "Saving" : "Save override"}
+            </button>
+            <button type="button" className="secondary" onClick={onReset} disabled={saving}>
+              <RotateCcw size={16} />
+              Reset override
+            </button>
+          </div>
+
+          {conventions && conventions.diagnostics.length > 0 && (
+            <div className="diagnostics">
+              {conventions.diagnostics.map((diagnostic) => (
+                <p key={diagnostic}>{diagnostic}</p>
+              ))}
+            </div>
+          )}
+
+          <div className="convention-grid">
+            <fieldset>
+              <legend>Profile</legend>
+              <select
+                value={settings.profile}
+                onChange={(event) =>
+                  onChangeDraft({
+                    ...settings,
+                    profile: event.target.value as ConventionSettings["profile"],
+                  })
+                }
+              >
+                <option value="standard">standard</option>
+                <option value="minimal">minimal</option>
+                <option value="custom">custom</option>
+              </select>
+            </fieldset>
+
+            <ConventionGroup title="TypeScript">
+              <Checkbox
+                label="Formatter"
+                checked={settings.typescript.formatter.enabled}
+                onChange={(enabled) =>
+                  onChangeDraft({
+                    ...settings,
+                    typescript: {
+                      ...settings.typescript,
+                      formatter: { ...settings.typescript.formatter, enabled },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Require formatter config"
+                checked={settings.typescript.formatter.requireConfig}
+                onChange={(requireConfig) =>
+                  onChangeDraft({
+                    ...settings,
+                    typescript: {
+                      ...settings.typescript,
+                      formatter: { ...settings.typescript.formatter, requireConfig },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Import ordering"
+                checked={settings.typescript.ordering.imports}
+                onChange={(imports) =>
+                  onChangeDraft({
+                    ...settings,
+                    typescript: {
+                      ...settings.typescript,
+                      ordering: { ...settings.typescript.ordering, imports },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Class member ordering"
+                checked={settings.typescript.ordering.classMembers}
+                onChange={(classMembers) =>
+                  onChangeDraft({
+                    ...settings,
+                    typescript: {
+                      ...settings.typescript,
+                      ordering: { ...settings.typescript.ordering, classMembers },
+                    },
+                  })
+                }
+              />
+              <MemberGroups
+                value={settings.typescript.ordering.memberGroups}
+                onChange={(memberGroups) =>
+                  onChangeDraft({
+                    ...settings,
+                    typescript: {
+                      ...settings.typescript,
+                      ordering: { ...settings.typescript.ordering, memberGroups },
+                    },
+                  })
+                }
+              />
+            </ConventionGroup>
+
+            <ConventionGroup title="Rust">
+              <Checkbox
+                label="Formatter"
+                checked={settings.rust.formatter.enabled}
+                onChange={(enabled) =>
+                  onChangeDraft({
+                    ...settings,
+                    rust: {
+                      ...settings.rust,
+                      formatter: { ...settings.rust.formatter, enabled },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Require formatter config"
+                checked={settings.rust.formatter.requireConfig}
+                onChange={(requireConfig) =>
+                  onChangeDraft({
+                    ...settings,
+                    rust: {
+                      ...settings.rust,
+                      formatter: { ...settings.rust.formatter, requireConfig },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Use item ordering"
+                checked={settings.rust.ordering.useItems}
+                onChange={(useItems) =>
+                  onChangeDraft({
+                    ...settings,
+                    rust: {
+                      ...settings.rust,
+                      ordering: { ...settings.rust.ordering, useItems },
+                    },
+                  })
+                }
+              />
+              <Checkbox
+                label="Impl member ordering"
+                checked={settings.rust.ordering.implMembers}
+                onChange={(implMembers) =>
+                  onChangeDraft({
+                    ...settings,
+                    rust: {
+                      ...settings.rust,
+                      ordering: { ...settings.rust.ordering, implMembers },
+                    },
+                  })
+                }
+              />
+              <MemberGroups
+                value={settings.rust.ordering.memberGroups}
+                onChange={(memberGroups) =>
+                  onChangeDraft({
+                    ...settings,
+                    rust: {
+                      ...settings.rust,
+                      ordering: { ...settings.rust.ordering, memberGroups },
+                    },
+                  })
+                }
+              />
+            </ConventionGroup>
+          </div>
+
+          <div className="convention-layers">
+            <LayerSummary title="Project Config" value={conventions?.projectConfig ?? null} />
+            <LayerSummary title="Local Override" value={conventions?.localOverride ?? null} />
+            <LayerSummary title="Effective" value={conventions?.effective ?? settings} />
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ConventionGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <fieldset>
+      <legend>{title}</legend>
+      <div className="convention-controls">{children}</div>
+    </fieldset>
+  );
+}
+
+function Checkbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="checkbox-row">
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function MemberGroups({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+  return (
+    <label className="field-stack">
+      <span>Member groups</span>
+      <input
+        value={value.join(", ")}
+        onChange={(event) =>
+          onChange(
+            event.target.value
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          )
+        }
+      />
+    </label>
+  );
+}
+
+function LayerSummary({ title, value }: { title: string; value: unknown }) {
+  return (
+    <details>
+      <summary>{title}</summary>
+      <pre>{value ? JSON.stringify(value, null, 2) : "null"}</pre>
+    </details>
+  );
+}
 
 export type RepositoriesPanelProps = {
   collapsed: boolean;

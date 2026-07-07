@@ -1,0 +1,8 @@
+{
+  "ruleId": "format-typescript",
+  "language": "typescript",
+  "positiveCases": [],
+  "noEditCases": [],
+  "invalidCases": [],
+  "requiredDiagnostics": ["requires prettier and project formatter config"]
+}

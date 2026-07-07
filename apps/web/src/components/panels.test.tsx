@@ -21,6 +21,7 @@ import {
   FilePreviewPanel,
 } from "./previews";
 import {
+  ConventionsPage,
   FoldersPanel,
   RepositoriesPanel,
   RuleSelectionPanel,
@@ -31,6 +32,44 @@ import {
 } from "./panels";
 
 describe("presentational panels", () => {
+  test("ConventionsPage renders layers, diagnostics, save, reset, and edits", () => {
+    const onChangeDraft = vi.fn();
+    const onSave = vi.fn();
+    const onReset = vi.fn();
+    const settings = conventionSettings();
+
+    render(
+      <ConventionsPage
+        selectedRepository={repository()}
+        conventions={{
+          repositoryId: "repo-1",
+          projectConfig: settings,
+          localOverride: { profile: "custom" },
+          effective: settings,
+          diagnostics: ["TypeScript formatter command was not found."],
+        }}
+        draft={settings}
+        loading={false}
+        saving={false}
+        error=""
+        onChangeDraft={onChangeDraft}
+        onSave={onSave}
+        onReset={onReset}
+      />,
+    );
+
+    expect(screen.getByText("TypeScript formatter command was not found.")).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue("standard"), { target: { value: "custom" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save override/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Reset override/ }));
+
+    expect(onChangeDraft).toHaveBeenCalledWith(expect.objectContaining({ profile: "custom" }));
+    expect(onSave).toHaveBeenCalled();
+    expect(onReset).toHaveBeenCalled();
+    expect(screen.getByText("Project Config")).toBeInTheDocument();
+    expect(screen.getByText("Effective")).toBeInTheDocument();
+  });
+
   test("RepositoriesPanel renders empty, selected, unavailable, rename, and remove states", () => {
     const onEditLabel = vi.fn();
     const onRenameRepository = vi.fn();
@@ -491,3 +530,27 @@ describe("presentational panels", () => {
     expect(screen.getByText("reverted")).toBeInTheDocument();
   });
 });
+
+function conventionSettings() {
+  return {
+    profile: "standard" as const,
+    typescript: {
+      formatter: { enabled: true, requireConfig: true },
+      ordering: {
+        imports: true,
+        classMembers: true,
+        memberGroups: ["static-fields", "fields", "constructors", "methods"],
+        alphabeticalWithinGroups: true,
+      },
+    },
+    rust: {
+      formatter: { enabled: true, requireConfig: true },
+      ordering: {
+        useItems: true,
+        implMembers: true,
+        memberGroups: ["associated-types", "constants", "constructors", "methods"],
+        alphabeticalWithinGroups: true,
+      },
+    },
+  };
+}

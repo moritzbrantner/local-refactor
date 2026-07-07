@@ -53,7 +53,8 @@
               "module-organization",
               "type-structure",
               "declaration-organization",
-              "documentation"
+              "documentation",
+              "formatting"
             ]
           },
           "status": {

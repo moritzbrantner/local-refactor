@@ -1,0 +1,8 @@
+{
+  "ruleId": "sort-rust-use-items",
+  "language": "rust",
+  "positiveCases": ["basic-use-block"],
+  "noEditCases": ["macro-present"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": []
+}

@@ -1,0 +1,8 @@
+{
+  "ruleId": "sort-typescript-class-members",
+  "language": "typescript",
+  "positiveCases": ["basic-class"],
+  "noEditCases": ["decorated-class", "initialized-field"],
+  "invalidCases": ["syntax-error"],
+  "requiredDiagnostics": []
+}

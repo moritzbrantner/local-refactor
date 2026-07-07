@@ -1,5 +1,6 @@
 use crate::{
     analyzer::{self, AnalyzerRequest, AnalyzerSourceFile},
+    convention_executor,
     db::PatchAction,
     diff,
     edit_journal::JournaledEdit,
@@ -8,7 +9,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
     path_policy::PathPolicy,
-    rules::{rule_by_id, Language, RuleExecutionKind},
+    rules::{rule_by_id, RuleExecutionKind},
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -78,7 +79,9 @@ pub(crate) async fn plan(
     let mut diagnostics = Vec::new();
 
     for step in steps {
-        let (policy, files) = prepare_source_request(&step.request, Language::TypeScript)?;
+        let rule = rule_by_id(&step.rule_id)
+            .ok_or_else(|| anyhow!("unknown refactoring rule: {}", step.rule_id))?;
+        let (policy, files) = prepare_source_request(&step.request, rule.language)?;
         if files.is_empty() {
             plan_steps.push(DeterministicPlanStep {
                 policy,
@@ -86,25 +89,52 @@ pub(crate) async fn plan(
             });
             continue;
         }
+        if let Some(reason) = convention_rule_disabled_reason(&step.request, &step.rule_id) {
+            diagnostics.push(reason);
+            plan_steps.push(DeterministicPlanStep {
+                policy,
+                edits: Vec::new(),
+            });
+            continue;
+        }
 
-        let analyzer_files = files
-            .iter()
-            .map(|file| {
-                let content = current_content(&mut contents, file)?;
-                Ok(AnalyzerSourceFile::Content {
-                    file_path: file.clone(),
-                    content,
+        let response = if convention_executor::is_service_convention_rule(&step.rule_id) {
+            let (edits, rule_diagnostics) =
+                convention_executor::plan_rule(&step.request, &step.rule_id, &files, &mut |file| {
+                    current_content(&mut contents, file)
                 })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let response = analyzer::run(
-            analyzer_script,
-            AnalyzerRequest {
-                files: analyzer_files,
-                rules: vec![step.rule_id.clone()],
-            },
-        )
-        .await?;
+                .await?;
+            analyzer::AnalyzerResponse {
+                edits,
+                diagnostics: rule_diagnostics,
+            }
+        } else {
+            if rule.language != local_refactor_core::rules::Language::TypeScript {
+                return Err(anyhow!(
+                    "deterministic analyzer rule {} is not available for {}",
+                    rule.id,
+                    rule.language.display_name()
+                ));
+            }
+            let analyzer_files = files
+                .iter()
+                .map(|file| {
+                    let content = current_content(&mut contents, file)?;
+                    Ok(AnalyzerSourceFile::Content {
+                        file_path: file.clone(),
+                        content,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            analyzer::run(
+                analyzer_script,
+                AnalyzerRequest {
+                    files: analyzer_files,
+                    rules: vec![step.rule_id.clone()],
+                },
+            )
+            .await?
+        };
         diagnostics.extend(response.diagnostics);
 
         let edits = response
@@ -161,6 +191,20 @@ pub(crate) async fn plan(
     })
 }
 
+fn convention_rule_disabled_reason(request: &RunCreateRequest, rule_id: &str) -> Option<String> {
+    let conventions = request.convention_snapshot.as_ref()?;
+    match rule_id {
+        "normalize-imports" if !conventions.typescript.ordering.imports => {
+            Some("Skipped normalize-imports: TypeScript import ordering is disabled".to_string())
+        }
+        "sort-typescript-class-members" if !conventions.typescript.ordering.class_members => Some(
+            "Skipped sort-typescript-class-members: TypeScript class member ordering is disabled"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 pub(crate) fn validate_fingerprint(
     plan: &DeterministicPlan,
     expected_fingerprint: Option<&str>,
@@ -180,11 +224,9 @@ fn validate_deterministic_rules(rule_ids: &[String]) -> Result<()> {
     for rule_id in rule_ids {
         let rule =
             rule_by_id(rule_id).ok_or_else(|| anyhow!("unknown refactoring rule: {rule_id}"))?;
-        if rule.language != Language::TypeScript
-            || rule.execution_kind != RuleExecutionKind::Deterministic
-        {
+        if rule.execution_kind != RuleExecutionKind::Deterministic {
             return Err(anyhow!(
-                "Deterministic Preview only supports deterministic TypeScript rules"
+                "Deterministic Preview only supports deterministic rules"
             ));
         }
     }
@@ -215,10 +257,11 @@ fn rule_steps(request: &RunCreateRequest) -> Result<Vec<RuleStep>> {
                 });
             }
         }
+        sort_rule_steps(&mut steps);
         return Ok(steps);
     }
 
-    Ok(effective_rules(request)
+    let mut steps = effective_rules(request)
         .into_iter()
         .map(|rule_id| RuleStep {
             rule_id: rule_id.clone(),
@@ -227,7 +270,19 @@ fn rule_steps(request: &RunCreateRequest) -> Result<Vec<RuleStep>> {
                 ..request.clone()
             },
         })
-        .collect())
+        .collect::<Vec<_>>();
+    sort_rule_steps(&mut steps);
+    Ok(steps)
+}
+
+fn sort_rule_steps(steps: &mut [RuleStep]) {
+    steps.sort_by_key(|step| {
+        if step.rule_id.starts_with("format-") {
+            (1, step.rule_id.clone())
+        } else {
+            (0, step.rule_id.clone())
+        }
+    });
 }
 
 fn current_content(contents: &mut BTreeMap<String, String>, file: &str) -> Result<String> {
@@ -278,6 +333,12 @@ fn preview_fingerprint(
     }
     for command in &request.validation_commands {
         hash_field(&mut hasher, command);
+    }
+    if let Some(conventions) = request.convention_snapshot.as_ref() {
+        hash_field(
+            &mut hasher,
+            &serde_json::to_string(conventions).unwrap_or_default(),
+        );
     }
     for rule_id in rule_ids {
         hash_field(&mut hasher, rule_id);

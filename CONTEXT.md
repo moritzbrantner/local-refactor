@@ -40,6 +40,14 @@ _Avoid_: Affected files, predicted edits, dry-run diff
 A side-effect-free, whole-run preview of concrete edits produced by deterministic Refactoring Rules for the current run settings. A Deterministic Preview contains real diffs, but it is not a Run until applied.
 _Avoid_: Candidate File Preview, dry run, predicted edits
 
+**Convention Settings**:
+Machine-readable formatter and ordering preferences used by deterministic convention Refactoring Rules.
+_Avoid_: Style guide, lint preferences
+
+**Convention Layer**:
+Project configuration plus local Repository Source override, merged to produce effective Convention Settings for a Run.
+_Avoid_: UI settings, style source
+
 **Selection Evidence**:
 A recorded reason explaining why a Refactoring Rule was selected, such as config inheritance, source-file shape, language fallback, or folder markers.
 _Avoid_: Heuristic log
