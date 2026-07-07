@@ -1,0 +1,29 @@
+{
+  "language": "rust",
+  "entries": [
+    {
+      "id": "public-entrypoint-without-nearby-test",
+      "language": "rust",
+      "name": "Public Entrypoint Without Nearby Test",
+      "status": "preview-supported",
+      "description": "Detects public Rust entrypoints that do not appear to have nearby behavior coverage.",
+      "suggestedSolidificationRules": ["characterize-public-entrypoint"]
+    },
+    {
+      "id": "branch-or-error-path-needs-characterization",
+      "language": "rust",
+      "name": "Branch Or Error Path Needs Characterization",
+      "status": "preview-supported",
+      "description": "Detects public Rust entrypoints with visible branch, Result, Option, or error behavior worth characterizing before refactoring.",
+      "suggestedSolidificationRules": ["characterize-branch-and-error-behavior"]
+    },
+    {
+      "id": "boundary-input-needs-characterization",
+      "language": "rust",
+      "name": "Boundary Input Needs Characterization",
+      "status": "preview-supported",
+      "description": "Detects public Rust entrypoints that appear to parse, validate, normalize, serialize, deserialize, or convert inputs.",
+      "suggestedSolidificationRules": ["characterize-boundary-inputs"]
+    }
+  ]
+}

@@ -62,3 +62,11 @@ export const api = {
     if (!response.ok) throw new Error(await response.text());
   },
 };
+
+export function previewCoverageEvidence<T>(body: unknown): Promise<T> {
+  return api.post<T>("/api/coverage/evidence-preview", body);
+}
+
+export function createCoverageRun<T>(body: unknown): Promise<T> {
+  return api.post<T>("/api/coverage/runs", body);
+}

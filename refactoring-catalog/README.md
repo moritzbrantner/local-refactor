@@ -69,6 +69,17 @@ Documentation rules are model-planned and single-file in this release. They may
 add JSDoc or Rust `///` comments, but the patch plan must preserve runtime code,
 public API, and typecheck or cargo validation.
 
+## Coverage evidence
+
+Coverage Evidence Rules live in `coverage-evidence-catalog/`, not this
+Refactoring catalog. They are deterministic detectors that produce Coverage
+Evidence Preview items and do not edit files. Coverage Solidification Rules use
+that evidence in tests-only Coverage Solidification Runs.
+
+This separation preserves the project language: a Refactoring Rule performs a
+behavior-preserving code transformation, while a Coverage Evidence Rule records
+where behavior coverage may need strengthening before refactoring.
+
 ## Promotion checklist
 
 ```text

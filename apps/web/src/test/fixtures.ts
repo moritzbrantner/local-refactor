@@ -195,6 +195,10 @@ export function run(overrides: Partial<RunRecord> = {}): RunRecord {
     repositoryId: "repo-1",
     repositoryRootPath: "/tmp/local-refactor-fixture",
     targetRelativePath: ".",
+    runKind: "refactoring",
+    sourceCoverageRunId: null,
+    coverageEvidence: [],
+    behaviorClaims: [],
     ...overrides,
   };
 }

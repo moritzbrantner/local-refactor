@@ -91,3 +91,23 @@ _Avoid_: Backup
 **Validation Check**:
 A configured command used to verify that a run preserved behavior.
 _Avoid_: Test command
+
+**Coverage Solidification Run**:
+A tests-only run that adds or strengthens behavior coverage before a later Refactoring Run. Production code is read-only during this run.
+_Avoid_: Test refactor run, coverage fix
+
+**Coverage Evidence Rule**:
+A deterministic, side-effect-free rule that identifies behavior surfaces that may need tests. It produces evidence, not code edits.
+_Avoid_: Refactoring Rule, validation check
+
+**Coverage Evidence Preview**:
+A pre-run summary of behavior surfaces, likely owning test layers, nearby tests, and coverage-gap reasons produced by Coverage Evidence Rules.
+_Avoid_: Candidate File Preview, coverage report
+
+**Coverage Solidification Rule**:
+A model-planned rule that creates or updates tests during a Coverage Solidification Run using public behavior evidence.
+_Avoid_: Test Refactoring Rule, test generation prompt
+
+**Behavior Claim**:
+A recorded statement that a specific public behavior is now covered by a specific test in the owning layer.
+_Avoid_: Coverage percentage, assertion note

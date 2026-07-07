@@ -2,7 +2,8 @@ use crate::db::PatchAction;
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
     config::TestFileMode,
-    path_policy::{PathDecision, PathPolicy},
+    coverage::{BehaviorClaim, CoverageEvidenceItem},
+    path_policy::{is_test_file, PathDecision, PathPolicy},
     rules::{AllowedWrites, Language, RulePlanningContext, StackContext},
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,8 @@ pub struct PatchPlanModelRequest {
     pub planning_context: RulePlanningContext,
     pub test_file_mode: TestFileMode,
     pub stack_contexts: Vec<StackContext>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coverage_evidence: Vec<CoverageEvidenceItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repair_context: Option<PatchPlanRepairContext>,
 }
@@ -71,6 +74,15 @@ struct PatchPlanFile {
     content: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CoveragePatchPlanV1 {
+    summary: String,
+    files: Vec<PatchPlanFile>,
+    behavior_claims: Vec<BehaviorClaim>,
+    validation_command: String,
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum PatchPlanAction {
@@ -80,6 +92,10 @@ enum PatchPlanAction {
 }
 
 pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
+    if !request.coverage_evidence.is_empty() {
+        return build_coverage_prompt(request);
+    }
+
     let code_fence = request.language.code_fence();
     let files = request
         .files
@@ -184,6 +200,56 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
     parts.join("\n\n")
 }
 
+fn build_coverage_prompt(request: &PatchPlanModelRequest) -> String {
+    let code_fence = request.language.code_fence();
+    let files = request
+        .files
+        .iter()
+        .map(|file| {
+            format!(
+                "File: {}\n```{}\n{}\n```",
+                file.relative_path, code_fence, file.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    [
+        "You are a local coverage solidification assistant.".to_string(),
+        "Return only valid JSON. Do not use Markdown fences outside JSON strings.".to_string(),
+        "The response must match coverage-patch-plan-v1 exactly:".to_string(),
+        r#"{"summary":"short summary","files":[{"path":"src/example.test.ts","action":"create","content":"complete test file"}],"behaviorClaims":[{"id":"claim-id","evidenceId":"evidence-id","sourcePaths":["src/example.ts"],"publicEntrypoint":"example","behavior":"observable behavior","owningTestLayer":"TypeScript unit test","testPath":"src/example.test.ts","assertionSummary":"asserts observable behavior","existingCoverageReason":"no nearby coverage"}],"validationCommand":"test command"}"#.to_string(),
+        "Use exactly these top-level keys: summary, files, behaviorClaims, validationCommand.".to_string(),
+        "If no safe coverage improvement is available, return files: [] and behaviorClaims: [].".to_string(),
+        format!("Language: {}", request.language.display_name()),
+        format!("Rule id: {}", request.rule_id),
+        format!("Rule name: {}", request.rule_name),
+        format!("Rule description: {}", request.rule_description),
+        format!(
+            "Validation commands: {}",
+            request.validation_commands.join(" && ")
+        ),
+        format_policy_section("Workflow rules", &request.planning_context.workflow_rules),
+        format_policy_section(
+            "Preservation rules",
+            &request.planning_context.preservation_rules,
+        ),
+        format_policy_section("Structure rules", &request.planning_context.structure_rules),
+        format_policy_section(
+            "Test refactoring rules",
+            &request.planning_context.test_refactoring_rules,
+        ),
+        format_policy_section("Forbidden actions", &request.planning_context.forbidden_actions),
+        "Coverage evidence:".to_string(),
+        serde_json::to_string_pretty(&request.coverage_evidence)
+            .unwrap_or_else(|_| "[]".to_string()),
+        "Production files are read-only context. Create or update test files only.".to_string(),
+        "Current source and test context files:".to_string(),
+        files,
+    ]
+    .join("\n\n")
+}
+
 fn format_policy_section(title: &str, rules: &[String]) -> String {
     if rules.is_empty() {
         return format!("{title}: none");
@@ -286,6 +352,154 @@ pub(crate) fn parse_patch_plan_response(
     }
 
     Ok(edits)
+}
+
+pub(crate) fn parse_coverage_patch_plan_response(
+    request: &PatchPlanModelRequest,
+    policy: &PathPolicy,
+    response: &str,
+) -> Result<(Vec<PatchPlanEdit>, Vec<BehaviorClaim>)> {
+    if response.contains("```") {
+        return Err(anyhow!(
+            "coverage patch plan response must be raw JSON without Markdown fences"
+        ));
+    }
+
+    let value: Value = serde_json::from_str(response)
+        .with_context(|| "coverage patch plan response was not valid JSON")?;
+    let plan: CoveragePatchPlanV1 = serde_json::from_value(value.clone())
+        .map_err(|error| patch_plan_shape_error(&value, error))?;
+    validate_coverage_plan_shape(&plan)?;
+
+    let evidence_ids = request
+        .coverage_evidence
+        .iter()
+        .map(|evidence| evidence.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for claim in &plan.behavior_claims {
+        if !evidence_ids.contains(claim.evidence_id.as_str()) {
+            return Err(anyhow!(
+                "behavior claim {} referenced unknown evidence {}",
+                claim.id,
+                claim.evidence_id
+            ));
+        }
+    }
+
+    let sources = request
+        .files
+        .iter()
+        .map(|file| (file.relative_path.as_str(), file.content.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut edits = Vec::new();
+    for file in plan.files {
+        let relative = validate_relative_path(&file.path)?;
+        if !is_test_file(Path::new(&relative)) {
+            return Err(anyhow!(
+                "{}: coverage solidification may only edit test files",
+                file.path
+            ));
+        }
+        let absolute = policy.target_root().join(&relative);
+        if policy.decision_for(&absolute) != PathDecision::Mutable {
+            return Err(anyhow!(
+                "coverage patch plan attempted to edit non-mutable path {}",
+                file.path
+            ));
+        }
+
+        match file.action {
+            PatchPlanAction::Update => {
+                let content = file
+                    .content
+                    .ok_or_else(|| anyhow!("{}: update requires content", file.path))?;
+                reject_weakened_test_markers(&file.path, &content)?;
+                let original = sources.get(file.path.as_str()).ok_or_else(|| {
+                    anyhow!(
+                        "{}: update target was not in coverage planning input",
+                        file.path
+                    )
+                })?;
+                let current = std::fs::read_to_string(&absolute)
+                    .with_context(|| format!("failed to read {}", absolute.display()))?;
+                if current != *original {
+                    return Err(anyhow!(
+                        "external modification conflict while editing {}",
+                        absolute.display()
+                    ));
+                }
+                edits.push(PatchPlanEdit {
+                    file_path: absolute.to_string_lossy().to_string(),
+                    original_content: (*original).to_string(),
+                    new_content: content,
+                    rule_id: request.rule_id.clone(),
+                    summary: plan.summary.clone(),
+                    action: PatchAction::Update,
+                });
+            }
+            PatchPlanAction::Create => {
+                let content = file
+                    .content
+                    .ok_or_else(|| anyhow!("{}: create requires content", file.path))?;
+                reject_weakened_test_markers(&file.path, &content)?;
+                if absolute.exists() {
+                    return Err(anyhow!("{}: create target already exists", file.path));
+                }
+                edits.push(PatchPlanEdit {
+                    file_path: absolute.to_string_lossy().to_string(),
+                    original_content: String::new(),
+                    new_content: content,
+                    rule_id: request.rule_id.clone(),
+                    summary: plan.summary.clone(),
+                    action: PatchAction::Create,
+                });
+            }
+            PatchPlanAction::Delete => {
+                return Err(anyhow!(
+                    "{}: delete is not supported in coverage patch plans",
+                    file.path
+                ));
+            }
+        }
+    }
+
+    Ok((edits, plan.behavior_claims))
+}
+
+fn validate_coverage_plan_shape(plan: &CoveragePatchPlanV1) -> Result<()> {
+    if plan.summary.trim().is_empty() {
+        return Err(anyhow!("coverage patch plan summary must be non-empty"));
+    }
+    if plan.validation_command.trim().is_empty() {
+        return Err(anyhow!(
+            "coverage patch plan validationCommand must be non-empty"
+        ));
+    }
+    if !plan.files.is_empty() && plan.behavior_claims.is_empty() {
+        return Err(anyhow!(
+            "coverage patch plan must include behaviorClaims when files change"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_weakened_test_markers(path: &str, content: &str) -> Result<()> {
+    for marker in [
+        ".skip(",
+        ".only(",
+        "test.skip",
+        "test.only",
+        "describe.skip",
+        "describe.only",
+    ] {
+        if content.contains(marker) {
+            return Err(anyhow!(
+                "{path}: coverage solidification may not add disabled or exclusive test marker {marker}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_plan_shape(plan: &PatchPlanV1) -> Result<()> {
@@ -517,6 +731,46 @@ mod tests {
             ),
             test_file_mode: TestFileMode::Mutable,
             stack_contexts: vec![StackContext::TypeScriptBackend],
+            coverage_evidence: Vec::new(),
+            repair_context: None,
+        }
+    }
+
+    fn coverage_request(root: PathBuf) -> PatchPlanModelRequest {
+        PatchPlanModelRequest {
+            rule_id: "characterize-public-entrypoint".to_string(),
+            language: Language::TypeScript,
+            rule_name: "Characterize Public Entrypoint".to_string(),
+            rule_description: "Adds tests for observable behavior through public APIs.".to_string(),
+            target_root: root,
+            files: vec![PatchPlanSourceFile {
+                relative_path: "src/calculator.ts".to_string(),
+                content: "export function calculateTotal() { return 0; }\n".to_string(),
+            }],
+            validation_commands: vec!["bun test".to_string()],
+            allowed_writes: AllowedWrites::MultiFileWithinTarget,
+            planning_context: RulePlanningContext {
+                workflow_rules: Vec::new(),
+                preservation_rules: Vec::new(),
+                structure_rules: Vec::new(),
+                test_refactoring_rules: Vec::new(),
+                forbidden_actions: Vec::new(),
+                stack_rules: Vec::new(),
+            },
+            test_file_mode: TestFileMode::Mutable,
+            stack_contexts: vec![StackContext::TypeScriptBackend],
+            coverage_evidence: vec![CoverageEvidenceItem {
+                id: "public-entrypoint-without-nearby-test:src/calculator.ts:calculateTotal"
+                    .to_string(),
+                rule_id: "public-entrypoint-without-nearby-test".to_string(),
+                language: Language::TypeScript,
+                source_path: "src/calculator.ts".to_string(),
+                public_entrypoint: "calculateTotal".to_string(),
+                owning_test_layer: "TypeScript unit test".to_string(),
+                nearby_test_paths: Vec::new(),
+                gap_reason: "No nearby test appears to cover calculateTotal.".to_string(),
+                suggested_solidification_rules: vec!["characterize-public-entrypoint".to_string()],
+            }],
             repair_context: None,
         }
     }
@@ -544,6 +798,43 @@ mod tests {
         assert!(prompt.contains("Use exactly these top-level keys"));
         assert!(prompt.contains("files: []"));
         assert!(prompt.contains("Do not return wrapper objects"));
+    }
+
+    #[test]
+    fn coverage_patch_plan_rejects_production_file_edits() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("src/calculator.ts");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "export function calculateTotal() { return 0; }\n").unwrap();
+        let request = coverage_request(dir.path().to_path_buf());
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = serde_json::json!({
+            "summary": "Change production",
+            "files": [{
+                "path": "src/calculator.ts",
+                "action": "update",
+                "content": "export function calculateTotal() { return 1; }\n"
+            }],
+            "behaviorClaims": [{
+                "id": "claim-total",
+                "evidenceId": "public-entrypoint-without-nearby-test:src/calculator.ts:calculateTotal",
+                "sourcePaths": ["src/calculator.ts"],
+                "publicEntrypoint": "calculateTotal",
+                "behavior": "returns zero",
+                "owningTestLayer": "TypeScript unit test",
+                "testPath": "src/calculator.test.ts",
+                "assertionSummary": "asserts zero",
+                "existingCoverageReason": "no nearby coverage"
+            }],
+            "validationCommand": "bun test"
+        })
+        .to_string();
+
+        let error = parse_coverage_patch_plan_response(&request, &policy, &response).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("coverage solidification may only edit test files"));
     }
 
     #[test]

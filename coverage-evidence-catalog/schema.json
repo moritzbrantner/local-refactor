@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "local-refactor coverage evidence catalog",
+  "type": "object",
+  "required": ["language", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "language": {
+      "type": "string",
+      "enum": ["typescript", "rust"]
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "language",
+          "name",
+          "status",
+          "description",
+          "suggestedSolidificationRules"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+          },
+          "language": {
+            "type": "string",
+            "enum": ["typescript", "rust"]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["cataloged", "preview-supported"]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suggestedSolidificationRules": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

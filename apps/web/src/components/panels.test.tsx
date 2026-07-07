@@ -487,7 +487,22 @@ describe("presentational panels", () => {
 
     rerender(
       <RunDetail
-        selectedRun={run()}
+        selectedRun={run({
+          runKind: "coverageSolidification",
+          behaviorClaims: [
+            {
+              id: "claim-empty-total",
+              evidenceId: "evidence-empty-total",
+              sourcePaths: ["src/calculator.ts"],
+              publicEntrypoint: "calculateTotal",
+              behavior: "returns zero for empty input",
+              owningTestLayer: "TypeScript unit test",
+              testPath: "src/calculator.test.ts",
+              assertionSummary: "asserts empty input returns zero",
+              existingCoverageReason: "no nearby coverage",
+            },
+          ],
+        })}
         repositories={[repository()]}
         selectedRunReview={review}
         selectedRunEvents={runEvents}
@@ -500,6 +515,8 @@ describe("presentational panels", () => {
     expect(screen.getByText("45%")).toBeInTheDocument();
     expect(screen.getByText("Run started")).toBeInTheDocument();
     expect(screen.getByText(/return value/)).toBeInTheDocument();
+    expect(screen.getByText("Behavior claims")).toBeInTheDocument();
+    expect(screen.getByText(/returns zero for empty input/)).toBeInTheDocument();
 
     rerender(
       <RunDetail

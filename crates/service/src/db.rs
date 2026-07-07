@@ -1,8 +1,9 @@
-use crate::RunCreateRequest;
+use crate::{RunCreateRequest, RunKind};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use local_refactor_core::{
     conventions::{ConventionSettings, PartialConventionSettings},
+    coverage::{BehaviorClaim, CoverageEvidenceItem},
     rule_selection::RuleSelectionPlan,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -47,6 +48,10 @@ pub struct RunRecord {
     pub repository_root_path: Option<String>,
     pub target_relative_path: Option<String>,
     pub convention_snapshot: Option<ConventionSettings>,
+    pub run_kind: RunKind,
+    pub source_coverage_run_id: Option<String>,
+    pub coverage_evidence: Vec<CoverageEvidenceItem>,
+    pub behavior_claims: Vec<BehaviorClaim>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -171,6 +176,15 @@ impl Database {
         ensure_column(&conn, "runs", "metrics_json", "TEXT")?;
         ensure_column(&conn, "runs", "rule_selection_plan_json", "TEXT")?;
         ensure_column(&conn, "runs", "convention_snapshot_json", "TEXT")?;
+        ensure_column(
+            &conn,
+            "runs",
+            "run_kind",
+            "TEXT NOT NULL DEFAULT 'refactoring'",
+        )?;
+        ensure_column(&conn, "runs", "source_coverage_run_id", "TEXT")?;
+        ensure_column(&conn, "runs", "coverage_evidence_json", "TEXT")?;
+        ensure_column(&conn, "runs", "behavior_claims_json", "TEXT")?;
         ensure_column(&conn, "patches", "action", "TEXT NOT NULL DEFAULT 'update'")?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -332,8 +346,9 @@ impl Database {
                 id, target_path, status, created_at, updated_at, rules_json,
                 test_file_mode, validation_json, protected_json, repository_id,
                 repository_root_path, target_relative_path, model, rule_selection_plan_json,
-                convention_snapshot_json
-            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                convention_snapshot_json, run_kind, source_coverage_run_id,
+                coverage_evidence_json, behavior_claims_json
+            ) VALUES (?1, ?2, 'queued', ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             "#,
             params![
                 id,
@@ -357,6 +372,10 @@ impl Database {
                     .as_ref()
                     .map(serde_json::to_string)
                     .transpose()?,
+                serde_json::to_string(&request.run_kind)?,
+                request.source_coverage_run_id,
+                serde_json::to_string(&request.coverage_evidence)?,
+                serde_json::to_string(&request.behavior_claims)?,
             ],
         )?;
         drop(conn);
@@ -397,6 +416,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_behavior_claims(&self, id: &str, claims: &[BehaviorClaim]) -> Result<()> {
+        self.conn()?.execute(
+            "UPDATE runs SET behavior_claims_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::to_string(claims)?, Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
     pub fn metrics_for_run(&self, id: &str) -> Result<Option<RunMetrics>> {
         let metrics_json: Option<String> = self
             .conn()?
@@ -421,7 +448,8 @@ impl Database {
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
                        repository_id, repository_root_path, target_relative_path, model,
-                       rule_selection_plan_json, convention_snapshot_json
+                       rule_selection_plan_json, convention_snapshot_json, run_kind,
+                       source_coverage_run_id, coverage_evidence_json, behavior_claims_json
                 FROM runs
                 WHERE repository_id = ?1
                 ORDER BY created_at DESC
@@ -439,7 +467,8 @@ impl Database {
             SELECT id, target_path, status, created_at, updated_at, rules_json,
                    test_file_mode, validation_json, protected_json, validation_output, error,
                    repository_id, repository_root_path, target_relative_path, model,
-                   rule_selection_plan_json, convention_snapshot_json
+                   rule_selection_plan_json, convention_snapshot_json, run_kind,
+                   source_coverage_run_id, coverage_evidence_json, behavior_claims_json
             FROM runs
             ORDER BY created_at DESC
             LIMIT 100
@@ -457,7 +486,8 @@ impl Database {
                 SELECT id, target_path, status, created_at, updated_at, rules_json,
                        test_file_mode, validation_json, protected_json, validation_output, error,
                        repository_id, repository_root_path, target_relative_path, model,
-                       rule_selection_plan_json, convention_snapshot_json
+                       rule_selection_plan_json, convention_snapshot_json, run_kind,
+                       source_coverage_run_id, coverage_evidence_json, behavior_claims_json
                 FROM runs
                 WHERE id = ?1
                 "#,
@@ -590,6 +620,9 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     let protected_json: String = row.get(8)?;
     let rule_selection_plan_json: Option<String> = row.get(15)?;
     let convention_snapshot_json: Option<String> = row.get(16)?;
+    let run_kind_json: Option<String> = row.get(17)?;
+    let coverage_evidence_json: Option<String> = row.get(19)?;
+    let behavior_claims_json: Option<String> = row.get(20)?;
 
     Ok(RunRecord {
         id: row.get(0)?,
@@ -612,5 +645,15 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
         target_relative_path: row.get(13)?,
         convention_snapshot: convention_snapshot_json
             .and_then(|json| serde_json::from_str(&json).ok()),
+        run_kind: run_kind_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
+        source_coverage_run_id: row.get(18)?,
+        coverage_evidence: coverage_evidence_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
+        behavior_claims: behavior_claims_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
     })
 }

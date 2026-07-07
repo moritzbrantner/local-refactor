@@ -1,0 +1,29 @@
+{
+  "language": "typescript",
+  "entries": [
+    {
+      "id": "public-entrypoint-without-nearby-test",
+      "language": "typescript",
+      "name": "Public Entrypoint Without Nearby Test",
+      "status": "preview-supported",
+      "description": "Detects exported TypeScript entrypoints that do not appear to have nearby behavior coverage.",
+      "suggestedSolidificationRules": ["characterize-public-entrypoint"]
+    },
+    {
+      "id": "branch-or-error-path-needs-characterization",
+      "language": "typescript",
+      "name": "Branch Or Error Path Needs Characterization",
+      "status": "preview-supported",
+      "description": "Detects public TypeScript entrypoints with visible branch or error behavior worth characterizing before refactoring.",
+      "suggestedSolidificationRules": ["characterize-branch-and-error-behavior"]
+    },
+    {
+      "id": "boundary-input-needs-characterization",
+      "language": "typescript",
+      "name": "Boundary Input Needs Characterization",
+      "status": "preview-supported",
+      "description": "Detects public TypeScript entrypoints that appear to parse, validate, normalize, sort, or transform inputs.",
+      "suggestedSolidificationRules": ["characterize-boundary-inputs"]
+    }
+  ]
+}

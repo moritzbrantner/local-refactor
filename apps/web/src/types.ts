@@ -76,6 +76,40 @@ export type RunRecord = {
   repositoryRootPath?: string;
   targetRelativePath?: string;
   conventionSnapshot?: ConventionSettings | null;
+  runKind?: "refactoring" | "coverageSolidification";
+  sourceCoverageRunId?: string | null;
+  coverageEvidence?: CoverageEvidenceItem[];
+  behaviorClaims?: BehaviorClaim[];
+};
+
+export type CoverageEvidenceItem = {
+  id: string;
+  ruleId: string;
+  language: "typescript" | "rust";
+  sourcePath: string;
+  publicEntrypoint: string;
+  owningTestLayer: string;
+  nearbyTestPaths: string[];
+  gapReason: string;
+  suggestedSolidificationRules: string[];
+};
+
+export type BehaviorClaim = {
+  id: string;
+  evidenceId: string;
+  sourcePaths: string[];
+  publicEntrypoint: string;
+  behavior: string;
+  owningTestLayer: string;
+  testPath: string;
+  assertionSummary: string;
+  existingCoverageReason: string;
+};
+
+export type CoverageEvidencePreviewResponse = {
+  targetRelativePath: string;
+  validationCommands: string[];
+  evidence: CoverageEvidenceItem[];
 };
 
 export type ConventionProfile = "standard" | "minimal" | "custom";

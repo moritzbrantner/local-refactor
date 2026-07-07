@@ -66,6 +66,7 @@ struct RecordingModelGateway {
 #[derive(Clone, Copy)]
 enum RecordingModelResponse {
     FakePatchPlan,
+    CoveragePlan,
     DocumentationPerFile,
     Noop,
 }
@@ -122,6 +123,7 @@ impl ModelGateway for RecordingModelGateway {
         Box::pin(async move {
             Ok(match response {
                 RecordingModelResponse::FakePatchPlan => fake_patch_plan(&request.rule_id),
+                RecordingModelResponse::CoveragePlan => coverage_patch_plan_for_request(&request),
                 RecordingModelResponse::DocumentationPerFile => {
                     documentation_patch_plan_for_request(&request)
                 }
@@ -1824,6 +1826,151 @@ async fn run_review_is_loaded_from_persisted_database() {
     assert_number(&review.json["metrics"]["validationMs"]);
 }
 
+#[tokio::test]
+async fn coverage_evidence_preview_detects_public_typescript_entrypoint_without_nearby_test() {
+    let harness = Harness::new();
+    let source = harness.repo.path().join("src/calculator.ts");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        &source,
+        "export function calculateTotal(items: number[]) {\n  if (items.length === 0) return 0;\n  return items.reduce((total, item) => total + item, 0);\n}\n",
+    )
+    .unwrap();
+
+    let response = harness
+        .post_json(
+            "/api/coverage/evidence-preview",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "evidenceRules": ["public-entrypoint-without-nearby-test"]
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    assert_eq!(response.json["targetRelativePath"], ".");
+    assert_eq!(
+        response.json["evidence"][0]["ruleId"],
+        "public-entrypoint-without-nearby-test"
+    );
+    assert_eq!(
+        response.json["evidence"][0]["sourcePath"],
+        "src/calculator.ts"
+    );
+    assert_eq!(
+        response.json["evidence"][0]["publicEntrypoint"],
+        "calculateTotal"
+    );
+    assert_eq!(
+        response.json["evidence"][0]["owningTestLayer"],
+        "TypeScript unit test"
+    );
+}
+
+#[tokio::test]
+async fn coverage_solidification_run_requires_validation_commands() {
+    let harness = Harness::new();
+    let source = harness.repo.path().join("src/calculator.ts");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        &source,
+        "export function calculateTotal(items: number[]) {\n  return items.length;\n}\n",
+    )
+    .unwrap();
+
+    let response = harness
+        .post_json(
+            "/api/coverage/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["characterize-public-entrypoint"],
+                "model": "qwen2.5-coder:7b",
+                "coverageEvidence": []
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    assert!(response.json["error"]
+        .as_str()
+        .unwrap()
+        .contains("coverage solidification requires validation commands"));
+}
+
+#[tokio::test]
+async fn coverage_solidification_run_writes_tests_only_and_records_behavior_claims() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let harness = Harness::with_repo_and_gateway(
+        TempDir::new().unwrap(),
+        Arc::new(RecordingModelGateway {
+            requests: requests.clone(),
+            response: RecordingModelResponse::CoveragePlan,
+        }),
+    );
+    let source = harness.repo.path().join("src/calculator.ts");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        &source,
+        "export function calculateTotal(items: number[]) {\n  if (items.length === 0) return 0;\n  return items.reduce((total, item) => total + item, 0);\n}\n",
+    )
+    .unwrap();
+
+    let evidence = json!({
+        "id": "public-entrypoint-without-nearby-test:src/calculator.ts:calculateTotal",
+        "ruleId": "public-entrypoint-without-nearby-test",
+        "language": "typescript",
+        "sourcePath": "src/calculator.ts",
+        "publicEntrypoint": "calculateTotal",
+        "owningTestLayer": "TypeScript unit test",
+        "nearbyTestPaths": [],
+        "gapReason": "No nearby test appears to cover calculateTotal.",
+        "suggestedSolidificationRules": ["characterize-public-entrypoint"]
+    });
+
+    let created = harness
+        .post_json(
+            "/api/coverage/runs",
+            json!({
+                "targetPath": harness.repo.path().to_string_lossy(),
+                "rules": ["characterize-public-entrypoint"],
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["grep -q 'empty cart total' src/calculator.test.ts"],
+                "coverageEvidence": [evidence]
+            }),
+        )
+        .await;
+
+    assert_eq!(created.status, StatusCode::ACCEPTED);
+    let run_id = created.json["id"].as_str().unwrap();
+    harness.poll_run(run_id, "succeeded").await;
+
+    assert!(harness.repo.path().join("src/calculator.test.ts").exists());
+    assert!(harness.repo.path().join("src/calculator.ts").exists());
+    let review = harness
+        .get_json(&format!("/api/runs/{run_id}/review"))
+        .await;
+    assert_eq!(review.status, StatusCode::OK);
+    assert_eq!(review.json["run"]["runKind"], "coverageSolidification");
+    assert_eq!(
+        review.json["run"]["behaviorClaims"][0]["publicEntrypoint"],
+        "calculateTotal"
+    );
+    assert_eq!(
+        review.json["diff"]["files"][0]["filePath"]
+            .as_str()
+            .unwrap(),
+        harness
+            .repo
+            .path()
+            .join("src/calculator.test.ts")
+            .to_string_lossy()
+            .as_ref()
+    );
+
+    let model_requests = requests.lock().unwrap();
+    assert_eq!(model_requests[0].rule_id, "characterize-public-entrypoint");
+}
+
 struct Harness {
     app: Router,
     db: Arc<Database>,
@@ -2073,6 +2220,37 @@ fn documentation_patch_plan_for_request(
         }],
         "preservedExports": [],
         "validationCommand": "true"
+    })
+    .to_string()
+}
+
+fn coverage_patch_plan_for_request(
+    request: &local_refactor_service::PatchPlanModelRequest,
+) -> String {
+    let evidence_id = request
+        .coverage_evidence
+        .first()
+        .map(|evidence| evidence.id.as_str())
+        .unwrap_or("public-entrypoint-without-nearby-test:src/calculator.ts:calculateTotal");
+    json!({
+        "summary": "Characterize calculator total behavior",
+        "files": [{
+            "path": "src/calculator.test.ts",
+            "action": "create",
+            "content": "import { calculateTotal } from \"./calculator\";\n\ntest(\"empty cart total\", () => {\n  expect(calculateTotal([])).toBe(0);\n});\n"
+        }],
+        "behaviorClaims": [{
+            "id": "claim-empty-cart-total",
+            "evidenceId": evidence_id,
+            "sourcePaths": ["src/calculator.ts"],
+            "publicEntrypoint": "calculateTotal",
+            "behavior": "returns zero for an empty list",
+            "owningTestLayer": "TypeScript unit test",
+            "testPath": "src/calculator.test.ts",
+            "assertionSummary": "asserts empty cart total is zero",
+            "existingCoverageReason": "no nearby test covered calculateTotal"
+        }],
+        "validationCommand": "grep -q 'empty cart total' src/calculator.test.ts"
     })
     .to_string()
 }

@@ -512,6 +512,7 @@ pub(crate) fn patch_plan_request(
         planning_context,
         test_file_mode,
         stack_contexts,
+        coverage_evidence: Vec::new(),
         repair_context,
     })
 }

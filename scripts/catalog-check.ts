@@ -30,6 +30,20 @@ type CatalogEntry = {
   description: string;
 };
 
+type CoverageEvidenceCatalog = {
+  language: Language;
+  entries: CoverageEvidenceEntry[];
+};
+
+type CoverageEvidenceEntry = {
+  id: string;
+  language: Language;
+  name: string;
+  status: string;
+  description: string;
+  suggestedSolidificationRules: string[];
+};
+
 const root = new URL("..", import.meta.url).pathname;
 type Language = "typescript" | "rust";
 
@@ -37,7 +51,12 @@ const catalogPaths = [
   join(root, "refactoring-catalog/typescript.json"),
   join(root, "refactoring-catalog/rust.json"),
 ];
+const coverageEvidenceCatalogPaths = [
+  join(root, "coverage-evidence-catalog/typescript.json"),
+  join(root, "coverage-evidence-catalog/rust.json"),
+];
 const schemaPath = join(root, "refactoring-catalog/schema.json");
+const coverageEvidenceSchemaPath = join(root, "coverage-evidence-catalog/schema.json");
 const rulesPath = join(root, "crates/core/src/rules.rs");
 const runLifecyclePath = join(root, "crates/service/tests/run_lifecycle.rs");
 
@@ -80,14 +99,27 @@ const preserves = new Set([
 ]);
 const allowedWrites = new Set(["single-file", "multi-file-within-target"]);
 const languages = new Set(["typescript", "rust"]);
+const coverageEvidenceStatuses = new Set(["cataloged", "preview-supported"]);
+const coverageSolidificationRules = new Set([
+  "characterize-public-entrypoint",
+  "characterize-branch-and-error-behavior",
+  "characterize-boundary-inputs",
+]);
 
 const errors: string[] = [];
 
 function main() {
   requireFile(schemaPath, "schema");
+  requireFile(coverageEvidenceSchemaPath, "coverage evidence schema");
   const catalogs = catalogPaths.map((catalogPath) => readJson<Catalog>(catalogPath));
+  const coverageEvidenceCatalogs = coverageEvidenceCatalogPaths.map((catalogPath) =>
+    readJson<CoverageEvidenceCatalog>(catalogPath),
+  );
   for (const catalog of catalogs) {
     validateCatalog(catalog);
+  }
+  for (const catalog of coverageEvidenceCatalogs) {
+    validateCoverageEvidenceCatalog(catalog);
   }
   validatePublicRules(catalogs);
   validateCatalogMatchesRuntime(catalogs);
@@ -101,7 +133,7 @@ function main() {
   }
 
   console.log(
-    `catalog-check: ${catalogs.reduce((sum, catalog) => sum + catalog.entries.length, 0)} entries valid across ${catalogs.length} languages`,
+    `catalog-check: ${catalogs.reduce((sum, catalog) => sum + catalog.entries.length, 0)} refactoring entries and ${coverageEvidenceCatalogs.reduce((sum, catalog) => sum + catalog.entries.length, 0)} coverage evidence entries valid across ${catalogs.length} languages`,
   );
 }
 
@@ -182,6 +214,56 @@ function validateEntry(entry: CatalogEntry, seen: Set<string>) {
       add(`${entry.id}: llmEvalDirectory does not exist: ${entry.llmEvalDirectory}`);
     } else if (!readdirSync(evalDirectory).some((name) => name === `${entry.id}.json`)) {
       add(`${entry.id}: missing LLM eval task ${entry.llmEvalDirectory}/${entry.id}.json`);
+    }
+  }
+}
+
+function validateCoverageEvidenceCatalog(catalog: CoverageEvidenceCatalog) {
+  if (!isRecord(catalog)) {
+    add("coverage evidence catalog root must be an object");
+    return;
+  }
+  if (!languages.has(catalog.language)) {
+    add(`coverage evidence catalog language must be one of ${[...languages].join(", ")}`);
+  }
+  if (!Array.isArray(catalog.entries) || catalog.entries.length === 0) {
+    add("coverage evidence catalog entries must be a non-empty array");
+    return;
+  }
+
+  const seen = new Set<string>();
+  for (const entry of catalog.entries) {
+    if (!isRecord(entry)) {
+      add("coverage evidence catalog entry must be an object");
+      continue;
+    }
+    if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(entry.id)) {
+      add(`invalid coverage evidence id ${entry.id}`);
+    }
+    if (seen.has(entry.id)) {
+      add(`duplicate coverage evidence id ${entry.id}`);
+    }
+    seen.add(entry.id);
+    requireString(entry, "name");
+    requireString(entry, "description");
+    requireEnum(entry.status, coverageEvidenceStatuses, entry.id, "coverage evidence status");
+    if (!languages.has(entry.language)) {
+      add(`${entry.id}: coverage evidence language must be one of ${[...languages].join(", ")}`);
+    }
+    if (entry.language !== catalog.language) {
+      add(`${entry.id}: coverage evidence language does not match catalog language`);
+    }
+    if (
+      !Array.isArray(entry.suggestedSolidificationRules) ||
+      entry.suggestedSolidificationRules.length === 0
+    ) {
+      add(`${entry.id}: suggestedSolidificationRules must be a non-empty array`);
+    } else {
+      for (const rule of entry.suggestedSolidificationRules) {
+        if (!coverageSolidificationRules.has(rule)) {
+          add(`${entry.id}: unknown coverage solidification rule ${rule}`);
+        }
+      }
     }
   }
 }

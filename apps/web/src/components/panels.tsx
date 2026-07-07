@@ -1064,6 +1064,20 @@ export function RunDetail({
             </section>
           </div>
 
+          {selectedRun.behaviorClaims && selectedRun.behaviorClaims.length > 0 && (
+            <section>
+              <h4>Behavior claims</h4>
+              <ul>
+                {selectedRun.behaviorClaims.map((claim) => (
+                  <li key={claim.id}>
+                    <strong>{claim.publicEntrypoint}</strong>: {claim.behavior}
+                    <span className="muted"> in {claim.testPath}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {selectedRun.validationOutput && <pre className="log">{selectedRun.validationOutput}</pre>}
           {selectedRun.error && (
             <section className="run-error">

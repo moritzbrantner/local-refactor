@@ -72,3 +72,17 @@ Forbidden test refactors:
 - Do not rewrite snapshots or fixtures in a way that hides behavior changes.
 - Do not change validation commands to bypass failing tests.
 - Do not perform unrelated target-wide test cleanup.
+
+## Coverage Solidification Runs
+
+Coverage Solidification Runs are the preferred way to add missing behavior coverage before a production Refactoring Run. They use deterministic Coverage Evidence Rules to identify public behavior surfaces, then model-planned Coverage Solidification Rules create or update tests only.
+
+Coverage Solidification Runs use behavior coverage as the standard. Numeric line, branch, or function coverage can be useful external evidence, but it is not the primary goal and is not required by local-refactor.
+
+Coverage Solidification Runs have stricter boundaries than normal mutable-test refactoring:
+
+- Production files are read-only.
+- Test files are the only writable files.
+- Validation commands are required.
+- Every changed test run must record Behavior Claims.
+- Rust v1 coverage solidification should prefer integration tests under the nearest crate `tests/` directory rather than adding inline `#[cfg(test)]` modules to production files.

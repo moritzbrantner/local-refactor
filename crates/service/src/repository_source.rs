@@ -873,6 +873,10 @@ mod tests {
             repair_budget: 2,
             expected_deterministic_preview_fingerprint: None,
             convention_snapshot: None,
+            run_kind: crate::RunKind::Refactoring,
+            source_coverage_run_id: None,
+            coverage_evidence: Vec::new(),
+            behavior_claims: Vec::new(),
         };
         db.insert_run("run-1", &request).unwrap();
 
@@ -909,6 +913,10 @@ mod tests {
                 repair_budget: 2,
                 expected_deterministic_preview_fingerprint: None,
                 convention_snapshot: None,
+                run_kind: crate::RunKind::Refactoring,
+                source_coverage_run_id: None,
+                coverage_evidence: Vec::new(),
+                behavior_claims: Vec::new(),
             },
         )
         .unwrap();

@@ -97,6 +97,50 @@ service validates that plan before writing. Read-only test mode forbids test
 edits; mutable test mode allows colocated test refactoring and missing-coverage
 test creation without weakening behavior coverage.
 
+## Solidify Coverage Before Refactoring
+
+Coverage Solidification Runs add or strengthen behavior tests before production
+refactoring. They start with a Coverage Evidence Preview, which deterministically
+identifies public behavior surfaces that may need tests. A model-planned
+Coverage Solidification Run can then create or update test files only, record
+Behavior Claims, run validation, and preserve the same patch journal, review,
+diff, and revert lifecycle as normal runs.
+
+Coverage solidification requires validation commands. If none are configured or
+detected, the service rejects the run instead of treating skipped validation as
+success. Production source files are read-only during coverage solidification.
+
+Preview coverage evidence:
+
+```http
+POST /api/coverage/evidence-preview
+```
+
+```json
+{
+  "repositoryId": "saved-repository-id",
+  "targetRelativePath": "src",
+  "evidenceRules": ["public-entrypoint-without-nearby-test"]
+}
+```
+
+Start a coverage solidification run:
+
+```http
+POST /api/coverage/runs
+```
+
+```json
+{
+  "repositoryId": "saved-repository-id",
+  "targetRelativePath": "src",
+  "rules": ["characterize-public-entrypoint"],
+  "model": "qwen2.5-coder:7b",
+  "validationCommands": ["bun test"],
+  "coverageEvidence": []
+}
+```
+
 ## Configuration
 
 Runs can use automatic rule selection. When the web UI target changes, the

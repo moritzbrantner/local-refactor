@@ -1,5 +1,6 @@
 mod analyzer;
 mod convention_executor;
+mod coverage;
 mod db;
 mod deterministic_preview;
 mod diff;
@@ -26,6 +27,7 @@ use axum::{
 use local_refactor_core::{
     config::{ConfigLayer, TestFileMode},
     conventions::ConventionSettings,
+    coverage::{BehaviorClaim, CoverageEvidenceItem},
     rule_selection::RuleSelectionPlan,
     rules::{rule_by_id, Language, RuleExecutionKind, INITIAL_RULES},
 };
@@ -153,6 +155,22 @@ pub struct RunCreateRequest {
     expected_deterministic_preview_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     convention_snapshot: Option<ConventionSettings>,
+    #[serde(default)]
+    run_kind: RunKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_coverage_run_id: Option<String>,
+    #[serde(default)]
+    coverage_evidence: Vec<CoverageEvidenceItem>,
+    #[serde(default)]
+    behavior_claims: Vec<BehaviorClaim>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RunKind {
+    #[default]
+    Refactoring,
+    CoverageSolidification,
 }
 
 #[derive(Debug, Deserialize)]
@@ -290,6 +308,11 @@ pub fn router(state: ServiceState) -> Router {
         .route("/api/runs/{id}/revert", post(revert_run))
         .route("/api/runs/{id}/events", get(run_events))
         .route("/api/runs/{id}/diff", get(run_diff))
+        .route(
+            "/api/coverage/evidence-preview",
+            post(coverage::coverage_evidence_preview),
+        )
+        .route("/api/coverage/runs", post(coverage::create_coverage_run))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -856,6 +879,10 @@ mod tests {
             repair_budget: 2,
             expected_deterministic_preview_fingerprint: None,
             convention_snapshot: None,
+            run_kind: RunKind::Refactoring,
+            source_coverage_run_id: None,
+            coverage_evidence: Vec::new(),
+            behavior_claims: Vec::new(),
         }
     }
 
@@ -929,6 +956,10 @@ validationCommands = ["echo default validation"]
                 repair_budget: 2,
                 expected_deterministic_preview_fingerprint: None,
                 convention_snapshot: None,
+                run_kind: RunKind::Refactoring,
+                source_coverage_run_id: None,
+                coverage_evidence: Vec::new(),
+                behavior_claims: Vec::new(),
             },
         )
         .unwrap_err();

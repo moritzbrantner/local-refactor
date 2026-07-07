@@ -800,6 +800,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-rust",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
