@@ -34,7 +34,7 @@ the promotion path is explicit.
 
 Every catalog entry declares a `planningProfile`. The profile is runtime policy,
 not just documentation: `local_refactor_core` uses it to build model-planned
-guidance for preservation, structure, testing, forbidden actions, and
+guidance for preservation, structure, test refactoring, forbidden actions, and
 stack-specific rules.
 
 Current profiles are:
@@ -61,8 +61,9 @@ files, exports, text, forbidden paths, and forbidden text.
 During `/api/runs`, model-planned rules validate generated `patch-plan-v1`
 responses before writing. Plans may update mutable files and create files inside
 the target scope when the catalog allows multi-file writes. Plans may not delete
-files, write outside the mutable scope, write protected paths, or write read-only
-test files.
+files, write outside the mutable scope, write protected paths, or write
+read-only test files. When test files are mutable, Test Refactoring Rules still
+forbid weakened coverage and unrelated target-wide test cleanup.
 
 Documentation rules are model-planned and single-file in this release. They may
 add JSDoc or Rust `///` comments, but the patch plan must preserve runtime code,

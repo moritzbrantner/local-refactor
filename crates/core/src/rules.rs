@@ -120,7 +120,7 @@ pub struct RulePlanningContext {
     pub workflow_rules: Vec<String>,
     pub preservation_rules: Vec<String>,
     pub structure_rules: Vec<String>,
-    pub testing_rules: Vec<String>,
+    pub test_refactoring_rules: Vec<String>,
     pub forbidden_actions: Vec<String>,
     pub stack_rules: Vec<String>,
 }
@@ -545,19 +545,36 @@ pub fn planning_context_for(
         );
     }
 
-    let mut testing_rules = vec![
+    let mut test_refactoring_rules = vec![
         "Prefer characterization through public entrypoints.".to_string(),
         "Use the provided validation commands to reason about behavior preservation.".to_string(),
+        "Treat test code as a behavior-preserving refactoring surface, not a place for unrelated feature assertions.".to_string(),
     ];
     match test_file_mode {
-        TestFileMode::ReadOnly => testing_rules.push(
-            "Do not edit test files because the run testFileMode is readOnly; rely on validation commands and source-only refactoring."
+        TestFileMode::ReadOnly => test_refactoring_rules.push(
+            "Do not create, update, or refactor test files because the run testFileMode is readOnly; rely on validation commands and source-only refactoring."
                 .to_string(),
         ),
-        TestFileMode::Mutable => testing_rules.push(
-            "You may add or update touched/colocated characterization tests when that directly protects moved behavior."
-                .to_string(),
-        ),
+        TestFileMode::Mutable => {
+            test_refactoring_rules.push(
+                "You may refactor colocated tests that cover the production behavior or module being refactored."
+                    .to_string(),
+            );
+            test_refactoring_rules.push(
+                "You may create tests only when changed behavior lacks suitable existing coverage."
+                    .to_string(),
+            );
+            test_refactoring_rules
+                .push("Place new tests in the owning test layer for the behavior.".to_string());
+            test_refactoring_rules.push(
+                "Do not weaken tests: do not delete coverage, skip cases, loosen assertions, or rewrite snapshots/fixtures unless the resulting check is equivalent or stronger."
+                    .to_string(),
+            );
+            test_refactoring_rules.push(
+                "Keep test refactors reviewable and avoid target-wide cleanup unrelated to the refactored behavior."
+                    .to_string(),
+            );
+        }
     }
 
     RulePlanningContext {
@@ -567,7 +584,7 @@ pub fn planning_context_for(
         ],
         preservation_rules,
         structure_rules,
-        testing_rules,
+        test_refactoring_rules,
         forbidden_actions,
         stack_rules: stack_contexts
             .iter()
@@ -685,33 +702,38 @@ mod tests {
     #[test]
     fn react_policy_prefers_tailwindcss_styling() {
         let rule = rule_by_id("split-file-by-responsibility").unwrap();
-        let context =
-            planning_context_for(rule, TestFileMode::ReadOnly, &[StackContext::TypeScriptReact]);
+        let context = planning_context_for(
+            rule,
+            TestFileMode::ReadOnly,
+            &[StackContext::TypeScriptReact],
+        );
         let combined = combined_policy(&context);
 
         assert!(combined.contains("prefer styling via tailwindcss"));
     }
 
     #[test]
-    fn readonly_test_mode_forbids_test_edits() {
+    fn readonly_test_mode_forbids_test_file_creation_updates_and_refactors() {
         let rule = rule_by_id("split-file-by-responsibility").unwrap();
         let context = planning_context_for(rule, TestFileMode::ReadOnly, &[]);
+        let combined = combined_policy(&context);
 
-        assert!(context
-            .testing_rules
-            .iter()
-            .any(|rule| rule.contains("Do not edit test files")));
+        assert!(combined.contains("Do not create, update, or refactor test files"));
+        assert!(combined.contains("testFileMode is readOnly"));
     }
 
     #[test]
-    fn mutable_test_mode_allows_colocated_characterization_tests() {
+    fn mutable_test_mode_allows_colocated_test_refactors_without_weakening_coverage() {
         let rule = rule_by_id("split-file-by-responsibility").unwrap();
         let context = planning_context_for(rule, TestFileMode::Mutable, &[]);
+        let combined = combined_policy(&context);
 
-        assert!(context
-            .testing_rules
-            .iter()
-            .any(|rule| rule.contains("colocated characterization tests")));
+        assert!(combined.contains("refactor colocated tests"));
+        assert!(combined
+            .contains("create tests only when changed behavior lacks suitable existing coverage"));
+        assert!(combined.contains("Place new tests in the owning test layer"));
+        assert!(combined.contains("Do not weaken tests"));
+        assert!(combined.contains("avoid target-wide cleanup unrelated to the refactored behavior"));
     }
 
     fn combined_policy(context: &RulePlanningContext) -> String {
@@ -719,7 +741,7 @@ mod tests {
             context.workflow_rules.as_slice(),
             context.preservation_rules.as_slice(),
             context.structure_rules.as_slice(),
-            context.testing_rules.as_slice(),
+            context.test_refactoring_rules.as_slice(),
             context.forbidden_actions.as_slice(),
             context.stack_rules.as_slice(),
         ]

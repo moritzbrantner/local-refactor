@@ -13,8 +13,12 @@ A named, versioned rule that explains when a transformation is allowed, discoura
 _Avoid_: Prompt, instruction
 
 **Rule Policy**:
-Machine-readable preservation, structure, testing, and stack-specific constraints derived from a Refactoring Rule before a model-planned run.
+Machine-readable preservation, structure, test refactoring, and stack-specific constraints derived from a Refactoring Rule before a model-planned run.
 _Avoid_: Prompt text, agent note
+
+**Test Refactoring Rule**:
+The test-specific part of Rule Policy that constrains when a Run may create, update, or refactor test code. It is not a cataloged Refactoring Rule.
+_Avoid_: Testing prompt, test cleanup note
 
 **Planning Profile**:
 The rule policy category that shapes model-planned guidance, such as local transformation, local extraction, module split, public contract shape, or documentation only.

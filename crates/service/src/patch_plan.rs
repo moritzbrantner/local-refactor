@@ -141,7 +141,10 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
             "Structure rules",
             &request.planning_context.structure_rules,
         ),
-        format_policy_section("Testing rules", &request.planning_context.testing_rules),
+        format_policy_section(
+            "Test refactoring rules",
+            &request.planning_context.test_refactoring_rules,
+        ),
         format_policy_section(
             "Forbidden actions",
             &request.planning_context.forbidden_actions,
@@ -532,6 +535,8 @@ mod tests {
         assert!(prompt.contains("Return only valid JSON"));
         assert!(prompt.contains("patch-plan-v1"));
         assert!(prompt.contains("Preservation rules:"));
+        assert!(prompt.contains("Test refactoring rules:"));
+        assert!(!prompt.contains("Testing rules:"));
         assert!(prompt.contains("Preserve behavior"));
         assert!(prompt.contains("TypeScript backend"));
         assert!(prompt.contains("Allowed writes: MultiFileWithinTarget"));

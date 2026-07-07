@@ -91,9 +91,11 @@ is inside a Cargo project, the service detects `Cargo.toml` and runs
 Model-planned rules also receive runtime rule policy before the model is asked
 for a `patch-plan-v1`. The policy is built from the selected refactoring rule,
 detected stack context, and Test File Mode, and it states behavior preservation,
-public contract, structure, testing, forbidden-action, and stack-specific
+public contract, structure, test refactoring, forbidden-action, and stack-specific
 constraints. The model still returns only the strict JSON patch plan; the
-service validates that plan before writing.
+service validates that plan before writing. Read-only test mode forbids test
+edits; mutable test mode allows colocated test refactoring and missing-coverage
+test creation without weakening behavior coverage.
 
 ## Configuration
 

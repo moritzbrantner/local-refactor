@@ -48,3 +48,27 @@ Use Playwright fixture workflows when the browser interaction itself matters. Ke
 Use full-stack e2e sparingly. It should prove that the web app, Rust service, database, and filesystem can complete one deterministic Run without Ollama.
 
 Use Storybook for component state review. Storybook stories are not screenshot baselines, and this repo does not enforce visual regression thresholds.
+
+## Test Refactoring Rules
+
+Test Refactoring Rules apply to test files only when `Test File Mode` is `mutable`. Read-only test mode forbids creating, updating, or refactoring test files.
+
+Mutable test mode allows cleanup of colocated tests for the production behavior or module being refactored. Colocated tests are tests in the same test file, adjacent test module, or nearest test directory that already covers the production file or module. Test cleanup may improve setup, fixtures, naming, helper extraction, assertions, or structure, but it must not weaken coverage.
+
+New tests may be created only when changed behavior has no suitable existing coverage. Place new tests in the owning layer from the matrix above:
+
+- Rust core unit tests for pure core behavior.
+- Rust service integration tests for service, persistence, filesystem, validation, rollback, and provider boundaries.
+- TypeScript analyzer fixtures for deterministic TypeScript rule behavior.
+- Web unit tests for pure UI helpers and component states.
+- Playwright fixture workflows for browser interactions.
+- Full-stack smoke e2e only for connected deterministic workflows.
+
+Forbidden test refactors:
+
+- Do not add `.skip`, `.only`, or equivalent disabled test markers.
+- Do not delete assertions unless equivalent or stronger coverage remains.
+- Do not loosen assertions from specific behavior to broad truthiness.
+- Do not rewrite snapshots or fixtures in a way that hides behavior changes.
+- Do not change validation commands to bypass failing tests.
+- Do not perform unrelated target-wide test cleanup.
