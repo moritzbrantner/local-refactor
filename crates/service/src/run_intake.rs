@@ -1,6 +1,7 @@
 use crate::{
-    model_provider, patch_plan, relative_path_from_root, resolve_repository_folder, validation,
-    Database, PatchPlanModelRequest, PatchPlanSourceFile, RunCreateRequest,
+    model_provider, patch_plan,
+    repository_source::{relative_path_from_root, resolve_repository_folder},
+    validation, Database, PatchPlanModelRequest, PatchPlanSourceFile, RunCreateRequest,
 };
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
