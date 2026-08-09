@@ -111,3 +111,86 @@ _Avoid_: Test Refactoring Rule, test generation prompt
 **Behavior Claim**:
 A recorded statement that a specific public behavior is now covered by a specific test in the owning layer.
 _Avoid_: Coverage percentage, assertion note
+
+## Purpose
+
+`local-refactor` is a localhost-only autonomous refactoring service. It gives a user a browser workflow for selecting a local repository scope, choosing behavior-preserving Refactoring Rules, previewing eligible or deterministic edits, running validation, reviewing diffs, and reverting the service's own writes.
+
+## Architecture
+
+- The Rust workspace contains `local-refactor-core` for policy and planning concepts and `local-refactor-service` for HTTP orchestration, persistence, filesystem operations, validation, and rollback.
+- The service listens on `127.0.0.1:7373` by default and stores Run history and the Patch Journal in SQLite.
+- `workers/typescript-analyzer/` is a Bun TypeScript worker for TypeScript-aware analysis and deterministic transformations.
+- `apps/web/` is a React/Vite browser UI served on `127.0.0.1:5173` during development.
+- Model-planned runs use a local Ollama provider. Deterministic preview/apply and the normal deterministic verification suite do not require Ollama.
+
+## Important invariants
+
+- A Refactoring preserves behavior; behavior changes, general rewrites, and migrations are outside that term.
+- Mutable Scope, Read-Only Scope, Protected Paths, and Test File Mode constrain every Run.
+- The service records original content in the Patch Journal before each write and reverts its own writes after validation failure.
+- A Candidate File Preview reports eligibility, not predicted edits. A Deterministic Preview is side-effect free and contains concrete edits.
+- Applying a Deterministic Preview recomputes it and verifies its fingerprint before writing.
+- Coverage Solidification Runs may write tests only, require validation, and keep production source read-only.
+- `bun run check` must remain deterministic and must not require Ollama.
+
+## Current architectural decisions
+
+Accepted decisions are recorded in `docs/adr/`. The index in `docs/adr/README.md` covers the Rust-service/TypeScript-worker boundary, Ollama, SQLite history, rule policy and selection, preview semantics, testing layers, deterministic convention rules, test refactoring, and coverage solidification.
+
+Do not infer rationale that is absent from an ADR. Propose a new ADR for a consequential, difficult-to-reverse decision instead of rewriting history.
+
+## Known constraints
+
+- Supported development tooling is Rust 1.96+ and Bun 1.3+.
+- JavaScript package operations use `bun` or `bunx`; this repository does not use npm, npx, pnpm, or Yarn.
+- The product is localhost-only. Model-backed checks require a reachable Ollama instance and an installed local model.
+- Agent work is local-first. Remote Git or issue-tracker mutations require explicit user authorization.
+
+## Development commands
+
+```sh
+bun install
+bun run dev:service
+bun run dev:web
+```
+
+Run the deterministic repository verification suite with:
+
+```sh
+bun run check
+```
+
+Useful narrower checks are:
+
+```sh
+cargo fmt --all -- --check
+cargo test -p local-refactor-core
+cargo test -p local-refactor-service
+bun run check:catalog
+bun run test:benchmarks
+bun run --cwd workers/typescript-analyzer test
+bun run --cwd apps/web build
+bun run --cwd apps/web test:unit
+bun run --cwd apps/web build-storybook
+bun run --cwd apps/web test:e2e
+```
+
+The repository has no separate root lint or formatting script; use the Cargo formatter command above for Rust. The web build runs TypeScript project checking through `tsc -b`. Model-backed verification is opt-in:
+
+```sh
+bun run check:llm
+bun run check:local
+```
+
+## Testing strategy
+
+Tests follow the behavior ownership matrix in `docs/testing-strategy.md`: Rust core unit tests own pure policy, Rust service integration tests own service/persistence/filesystem boundaries, analyzer fixtures own deterministic TypeScript transformations, web unit tests own view behavior, and Playwright owns browser workflows. Use the narrow owning layer while iterating, then run `bun run check` before completion.
+
+## Current work
+
+No feature-specific work is designated in this file. Durable feature intent belongs in an authorized GitHub PRD issue or a local file under `specs/`; slice progress and verification evidence belong under `tasks/`. Always inspect `git status` before continuing work.
+
+## Open questions
+
+No repository-wide architectural question is currently recorded here. Keep unresolved feature-specific questions with their specification rather than inventing answers in this file.

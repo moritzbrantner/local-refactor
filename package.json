@@ -7,6 +7,7 @@
     "workers/typescript-analyzer"
   ],
   "scripts": {
+    "agent:worktree": "./scripts/agent-worktree",
     "dev:service": "cargo run -p local-refactor-service",
     "dev:web": "bun run --cwd apps/web dev",
     "test:core": "cargo test -p local-refactor-core",

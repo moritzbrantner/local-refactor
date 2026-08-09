@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/agent-worktree create <name>
+  scripts/agent-worktree list
+  scripts/agent-worktree remove <name>
+
+Creates worktrees in a predictable sibling directory and uses local branches
+named agent/<name>. Removing a worktree does not delete its branch.
+EOF
+}
+
+die() {
+  printf 'agent-worktree: %s\n' "$*" >&2
+  exit 1
+}
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die "run this command from inside a Git repository"
+repo_root="$(cd "$repo_root" && pwd -P)"
+repo_parent="$(dirname "$repo_root")"
+repo_name="$(basename "$repo_root")"
+worktree_root="$repo_parent/${repo_name}-worktrees"
+
+validate_name() {
+  local name="$1"
+
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid name '$name'; use letters, numbers, dots, underscores, or hyphens"
+  [[ "$name" != *..* ]] || die "invalid name '$name'; '..' is not allowed"
+  git check-ref-format --branch "agent/$name" >/dev/null 2>&1 ||
+    die "'agent/$name' is not a valid local branch name"
+}
+
+registered_worktree() {
+  local expected="$1"
+  local field
+
+  while IFS= read -r -d '' field; do
+    [[ "$field" == "worktree $expected" ]] && return 0
+  done < <(git worktree list --porcelain -z)
+
+  return 1
+}
+
+create_worktree() {
+  local name="$1"
+  local branch="agent/$name"
+  local target="$worktree_root/$name"
+
+  validate_name "$name"
+
+  if registered_worktree "$target"; then
+    printf 'Worktree already exists: %s\n' "$target"
+    return 0
+  fi
+
+  [[ ! -e "$target" ]] ||
+    die "target exists but is not a registered worktree: $target"
+
+  mkdir -p "$worktree_root"
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git worktree add "$target" "$branch"
+  else
+    git worktree add -b "$branch" "$target"
+  fi
+
+  printf 'Created %s on local branch %s\n' "$target" "$branch"
+}
+
+remove_worktree() {
+  local name="$1"
+  local branch="agent/$name"
+  local target="$worktree_root/$name"
+
+  validate_name "$name"
+
+  registered_worktree "$target" ||
+    die "no registered worktree found at $target"
+
+  git worktree remove "$target"
+  printf 'Removed worktree %s\n' "$target"
+  printf 'Retained local branch %s\n' "$branch"
+}
+
+command="${1:-}"
+
+case "$command" in
+  create)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    create_worktree "$2"
+    ;;
+  list)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    git worktree list
+    ;;
+  remove)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    remove_worktree "$2"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
