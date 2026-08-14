@@ -1726,7 +1726,7 @@ async fn run_leaves_test_files_read_only_by_default() {
             json!({
                 "targetPath": harness.repo.path().to_string_lossy(),
                 "rules": ["simplify-conditional"],
-                "model": "qwen2.5-coder:7b"
+                "model": "qwen2.5-coder:7b",\n                "validationCommands": ["true"]
             }),
         )
         .await;
@@ -1868,7 +1868,7 @@ async fn coverage_evidence_preview_detects_public_typescript_entrypoint_without_
 }
 
 #[tokio::test]
-async fn coverage_solidification_run_requires_validation_commands() {
+async fn coverage_solidification_without_explicit_commands_requires_tooling_gate() {
     let harness = Harness::new();
     let source = harness.repo.path().join("src/calculator.ts");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -1877,6 +1877,10 @@ async fn coverage_solidification_run_requires_validation_commands() {
         "export function calculateTotal(items: number[]) {\n  return items.length;\n}\n",
     )
     .unwrap();
+    std::env::set_var(
+        "LOCAL_REFACTOR_CODING_TOOLING_BIN",
+        harness.repo.path().join("missing-coding-tooling"),
+    );
 
     let response = harness
         .post_json(
@@ -1890,11 +1894,14 @@ async fn coverage_solidification_run_requires_validation_commands() {
         )
         .await;
 
-    assert_eq!(response.status, StatusCode::BAD_REQUEST);
-    assert!(response.json["error"]
+    assert_eq!(response.status, StatusCode::ACCEPTED);
+    let run_id = response.json["id"].as_str().unwrap();
+    let run = harness.poll_run(run_id, "failed").await;
+    std::env::remove_var("LOCAL_REFACTOR_CODING_TOOLING_BIN");
+    assert!(run["error"]
         .as_str()
         .unwrap()
-        .contains("coverage solidification requires validation commands"));
+        .contains("failed to start coding-tooling"));
 }
 
 #[tokio::test]
