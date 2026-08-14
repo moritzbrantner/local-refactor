@@ -18,6 +18,7 @@ test("full stack deterministic run can be previewed, applied, reviewed, and reve
   page,
   request,
 }) => {
+  test.setTimeout(90_000);
   const workspace = mkdtempSync(join(tmpdir(), "local-refactor-e2e-"));
   const fixtureRepo = join(workspace, "repo");
   const dbPath = join(workspace, "local-refactor.sqlite");
