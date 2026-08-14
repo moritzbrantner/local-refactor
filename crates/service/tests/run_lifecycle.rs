@@ -1870,7 +1870,13 @@ async fn coverage_evidence_preview_detects_public_typescript_entrypoint_without_
 
 #[tokio::test]
 async fn coverage_solidification_without_explicit_commands_requires_tooling_gate() {
-    let harness = Harness::new();
+    let harness = Harness::with_repo_and_gateway(
+        TempDir::new().unwrap(),
+        Arc::new(RecordingModelGateway {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            response: RecordingModelResponse::CoveragePlan,
+        }),
+    );
     let source = harness.repo.path().join("src/calculator.ts");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::write(
