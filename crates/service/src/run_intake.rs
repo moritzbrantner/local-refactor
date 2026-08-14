@@ -1,7 +1,7 @@
 use crate::{
     model_provider, patch_plan,
     repository_source::{relative_path_from_root, resolve_repository_folder},
-    validation, Database, PatchPlanModelRequest, PatchPlanSourceFile, RunCreateRequest,
+    Database, PatchPlanModelRequest, PatchPlanSourceFile, RunCreateRequest,
 };
 use anyhow::{anyhow, Context, Result};
 use local_refactor_core::{
@@ -569,9 +569,6 @@ pub(crate) fn effective_config_for_paths(
         config.apply_layer(load_config_file(&project_config)?);
     }
 
-    if config.validation_commands.is_empty() {
-        config.validation_commands = validation::detect_commands(target_path);
-    }
 
     config.apply_layer(run_layer);
     Ok(config)
