@@ -1,10 +1,6 @@
 rules = ["simplify-conditional"]
 testFileMode = "readOnly"
 
-validationCommands = [
-  "cd \"$(git rev-parse --show-toplevel)\" && bun run check",
-]
-
 protectedPaths = [
   "target/**",
   "apps/web/dist/**",
