@@ -38,13 +38,11 @@ async fn run_final_gate_with_binary(
     binary: &OsStr,
 ) -> Result<ValidationResult> {
     let output = Command::new(binary)
-        .args([
-            "check",
-            FINAL_GATE,
-            "--root",
-            &root.to_string_lossy(),
-            "--json",
-        ])
+        .arg("check")
+        .arg(FINAL_GATE)
+        .arg("--root")
+        .arg(root)
+        .arg("--json")
         .current_dir(root)
         .output()
         .await
@@ -109,7 +107,7 @@ fn formatted_stderr(stderr: &str) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt};
