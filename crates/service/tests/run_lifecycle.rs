@@ -1726,7 +1726,8 @@ async fn run_leaves_test_files_read_only_by_default() {
             json!({
                 "targetPath": harness.repo.path().to_string_lossy(),
                 "rules": ["simplify-conditional"],
-                "model": "qwen2.5-coder:7b",\n                "validationCommands": ["true"]
+                "model": "qwen2.5-coder:7b",
+                "validationCommands": ["true"]
             }),
         )
         .await;
