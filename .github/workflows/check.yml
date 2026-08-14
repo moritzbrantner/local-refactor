@@ -86,10 +86,10 @@ jobs:
     uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@workflow-standard-v1.3
     with:
       node_version: ""
+      pre_command: bun run --cwd apps/web playwright install --with-deps chromium
       build_command: bun run --cwd apps/web build
       e2e_command: bun run --cwd apps/web test:e2e
-      install_playwright: true
-      install_playwright_browsers: chromium
+      install_playwright: false
       artifact_paths: |
         apps/web/playwright-report
         apps/web/test-results
