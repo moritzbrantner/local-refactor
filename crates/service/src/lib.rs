@@ -8,6 +8,7 @@ mod edit_journal;
 mod model_provider;
 mod patch_plan;
 mod repository_source;
+mod repository_tooling;
 mod run_cancellation;
 mod run_executor;
 mod run_intake;
