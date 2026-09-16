@@ -1,14 +1,25 @@
 # local-refactor
 
-local-refactor is a localhost-only refactoring service with a browser UI. The current implementation is an MVP of the planned architecture:
+local-refactor is a localhost-only semantic formatter/refactoring normalizer that takes working code and moves it toward a repository's preferred form without intentionally changing behavior.
 
-- Rust service on `127.0.0.1:7373`
-- React/Vite web UI on `127.0.0.1:5173`
-- SQLite run history and patch journal
-- TypeScript analyzer worker run through Bun
-- model-planned TypeScript and Rust refactoring rules
-- Ollama-backed local coding model selection at `/api/models`
-- deterministic TypeScript refactoring preview and apply without an LLM
+It combines a Rust service, React/Vite browser UI, SQLite run history and patch journal, a Bun TypeScript analyzer worker, deterministic refactoring executors, and bounded local-model refactoring through Ollama.
+
+## Product boundary
+
+```text
+formatter / linter
+  deterministic, syntax-level
+        ↓
+local-refactor
+  semantic, low-risk, behavior-preserving cleanup
+        ↓
+full coding agent
+  bugs, features, architecture, ambiguous design work
+```
+
+Behavior preservation is the hard invariant. Refactorings remain cataloged and bounded rather than becoming free-form coding-agent tasks. Prefer deterministic execution whenever a reliable algorithm exists; use the local model only for narrow semantic transformations that require limited judgment.
+
+Feature implementation, bug fixing, migrations, architectural redesign, and open-ended implementation are outside local-refactor's product boundary. Shared `coding-agent-conventions` and repository-local instructions are policy inputs; local-refactor consumes them rather than becoming their source of truth.
 
 ## Requirements
 
@@ -184,6 +195,8 @@ Repository Source; project config is the reproducible baseline, and local UI
 overrides are stored in local-refactor's SQLite database for that Repository
 Source. Applied deterministic runs store the effective convention snapshot used
 for their preview fingerprint.
+
+These local Convention Settings are product configuration for rewrite/format/order behavior. They are distinct from shared engineering policy such as `coding-agent-conventions`, which remains an external policy input.
 
 ```toml
 [conventions]
