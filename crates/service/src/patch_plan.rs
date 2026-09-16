@@ -108,17 +108,24 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    let validation_command = request.validation_commands.join(" && ");
+    let schema_example = serde_json::json!({
+        "summary": "short summary",
+        "files": [{
+            "path": request.language.example_path(),
+            "action": "update",
+            "content": request.language.example_content(),
+        }],
+        "preservedExports": ["ExportName"],
+        "validationCommand": validation_command,
+    })
+    .to_string();
 
     let mut parts = vec![
         "You are a local refactoring assistant.".to_string(),
         "Return only valid JSON. Do not use Markdown fences outside JSON strings.".to_string(),
         "The response must match patch-plan-v1 exactly:".to_string(),
-        format!(
-            r#"{{ "summary": "short summary", "files": [{{ "path": "{}", "action": "update", "content": "{}" }}], "preservedExports": ["ExportName"], "validationCommand": "{}" }}"#,
-            request.language.example_path(),
-            request.language.example_content(),
-            request.validation_commands.join(" && ")
-        ),
+        schema_example,
         "Use exactly these top-level keys: summary, files, preservedExports, validationCommand.".to_string(),
         "If no safe change is available, return a patch-plan-v1 object with files: [] and a short summary explaining why.".to_string(),
         r#"Do not return wrapper objects like { "response": "..." }."#.to_string(),
@@ -215,14 +222,32 @@ fn build_coverage_prompt(request: &PatchPlanModelRequest) -> String {
         .join("\n\n");
 
     let validation_command = request.validation_commands.join(" && ");
+    let schema_example = serde_json::json!({
+        "summary": "short summary",
+        "files": [{
+            "path": "src/example.test.ts",
+            "action": "create",
+            "content": "complete test file",
+        }],
+        "behaviorClaims": [{
+            "id": "claim-id",
+            "evidenceId": "evidence-id",
+            "sourcePaths": ["src/example.ts"],
+            "publicEntrypoint": "example",
+            "behavior": "observable behavior",
+            "owningTestLayer": "TypeScript unit test",
+            "testPath": "src/example.test.ts",
+            "assertionSummary": "asserts observable behavior",
+            "existingCoverageReason": "no nearby coverage",
+        }],
+        "validationCommand": validation_command,
+    })
+    .to_string();
     let mut parts = vec![
         "You are a local coverage solidification assistant.".to_string(),
         "Return only valid JSON. Do not use Markdown fences outside JSON strings.".to_string(),
         "The response must match coverage-patch-plan-v1 exactly:".to_string(),
-        format!(
-            r#"{{"summary":"short summary","files":[{{"path":"src/example.test.ts","action":"create","content":"complete test file"}}],"behaviorClaims":[{{"id":"claim-id","evidenceId":"evidence-id","sourcePaths":["src/example.ts"],"publicEntrypoint":"example","behavior":"observable behavior","owningTestLayer":"TypeScript unit test","testPath":"src/example.test.ts","assertionSummary":"asserts observable behavior","existingCoverageReason":"no nearby coverage"}}],"validationCommand":"{}"}}"#,
-            validation_command
-        ),
+        schema_example,
         "Use exactly these top-level keys: summary, files, behaviorClaims, validationCommand.".to_string(),
         "If no safe coverage improvement is available, return files: [] and behaviorClaims: [].".to_string(),
         format!("Language: {}", request.language.display_name()),
@@ -794,6 +819,14 @@ mod tests {
         }
     }
 
+    fn schema_example(prompt: &str) -> Value {
+        let example = prompt
+            .split("\n\n")
+            .find(|part| part.starts_with('{'))
+            .expect("prompt should contain a JSON schema example");
+        serde_json::from_str(example).expect("schema example should be valid JSON")
+    }
+
     #[test]
     fn prompt_includes_policy_context_and_patch_plan_contract() {
         let dir = tempdir().unwrap();
@@ -817,6 +850,34 @@ mod tests {
         assert!(prompt.contains("Use exactly these top-level keys"));
         assert!(prompt.contains("files: []"));
         assert!(prompt.contains("Do not return wrapper objects"));
+    }
+
+    #[test]
+    fn normal_prompt_json_escapes_explicit_validation_command() {
+        let dir = tempdir().unwrap();
+        let mut request = request(
+            dir.path().to_path_buf(),
+            "",
+            AllowedWrites::SingleFile,
+        );
+        let command = "grep -q \"expected value\" path\\file\nprintf done";
+        request.validation_commands = vec![command.to_string()];
+
+        let example = schema_example(&build_prompt(&request));
+
+        assert_eq!(example["validationCommand"], command);
+    }
+
+    #[test]
+    fn coverage_prompt_json_escapes_explicit_validation_command() {
+        let dir = tempdir().unwrap();
+        let mut request = coverage_request(dir.path().to_path_buf());
+        let command = "grep -q \"expected value\" path\\file\nprintf done";
+        request.validation_commands = vec![command.to_string()];
+
+        let example = schema_example(&build_prompt(&request));
+
+        assert_eq!(example["validationCommand"], command);
     }
 
     #[test]
