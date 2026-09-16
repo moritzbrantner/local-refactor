@@ -1153,7 +1153,7 @@ mod tests {
 
         let error = parse_patch_plan_response(&request, &policy, response).unwrap_err();
 
-        assert!(error.to_string().contains("non-mable path"));
+        assert!(error.to_string().contains("non-mutable path"));
     }
 
     #[test]
