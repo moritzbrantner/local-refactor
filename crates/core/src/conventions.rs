@@ -40,20 +40,11 @@ pub enum ConventionProfile {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeScriptConventionSettings {
     pub formatter: FormatterConventionSettings,
     pub ordering: TypeScriptOrderingSettings,
-}
-
-impl Default for TypeScriptConventionSettings {
-    fn default() -> Self {
-        Self {
-            formatter: FormatterConventionSettings::default(),
-            ordering: TypeScriptOrderingSettings::default(),
-        }
-    }
 }
 
 impl TypeScriptConventionSettings {
@@ -67,20 +58,11 @@ impl TypeScriptConventionSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RustConventionSettings {
     pub formatter: FormatterConventionSettings,
     pub ordering: RustOrderingSettings,
-}
-
-impl Default for RustConventionSettings {
-    fn default() -> Self {
-        Self {
-            formatter: FormatterConventionSettings::default(),
-            ordering: RustOrderingSettings::default(),
-        }
-    }
 }
 
 impl RustConventionSettings {
