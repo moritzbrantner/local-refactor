@@ -34,7 +34,6 @@ Shared `coding-agent-conventions` and repository-local instructions are policy i
 - Record original content in the Patch Journal before every write.
 - Revert journaled writes when required validation fails.
 - Treat missing, unavailable, or broken validation tooling as failure, never as successful skipped validation.
-- Do not spend model-repair budget on tooling or environment failures.
 - Keep deterministic preview side-effect free; applying a preview must recompute and verify its fingerprint before writing.
 - Coverage Solidification Runs may write tests only and keep production code read-only.
 
