@@ -874,10 +874,13 @@ export function RunReviewPanel({ draft, rules, onCancel, onConfirm }: RunReviewP
         {draft.validationCommands.length > 0 ? (
           <ul>{draft.validationCommands.map((command) => <li key={command}>{command}</li>)}</ul>
         ) : (
-          <p>
-            Automatic validation uses the <code>coding-tooling</code> full tier in strict mode and may
-            execute repository-discovered checks on this machine.
-          </p>
+          <>
+            <p>No custom validation commands were entered.</p>
+            <p>
+              Automatic validation uses the <code>coding-tooling</code> full tier in strict mode and may
+              execute repository-discovered checks on this machine.
+            </p>
+          </>
         )}
         <p>
           Confirm only for repositories and validation tooling you trust; validation may execute
