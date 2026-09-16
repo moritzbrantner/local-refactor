@@ -25,6 +25,7 @@ Feature implementation, bug fixing, migrations, architectural redesign, and open
 
 - Rust 1.96+
 - Bun 1.3+
+- `coding-tooling` with the schema-v1 tier contract available on `PATH` for automatic repository validation, or `LOCAL_REFACTOR_CODING_TOOLING_BIN` pointing to a compatible executable. Explicit `validationCommands` can be used as a deliberate compatibility override.
 - Ollama at `http://127.0.0.1:11434` unless `OLLAMA_BASE_URL` is set. Runs can select `qwen2.5-coder:7b` or `deepseek-coder:6.7b`; the service asks Ollama to download the selected model before each run if it is missing.
 
 ## Install
@@ -56,7 +57,7 @@ In the browser UI:
 1. Choose a local Git repository root folder as a Repository Source.
 2. Select the repository.
 3. Select the repository root or a subfolder as the Target Folder.
-4. Select the local coding model and configure rules, test file mode, validation commands, and protected paths.
+4. Select the local coding model and configure rules, test file mode, optional validation-command overrides, and protected paths.
 5. For deterministic-only TypeScript rule selections, preview the concrete diffs and apply them.
 6. For model-planned or mixed rule selections, start the model-backed run.
 
@@ -88,16 +89,23 @@ to:
 return value;
 ```
 
-Each write is recorded in SQLite before the file is changed. If validation commands fail, the service reverts its own writes from the patch journal.
+Each write is recorded in SQLite before the file is changed. If required final validation fails, the service reverts its own writes from the patch journal.
 
 Rust support is model-planned. `rust-extract-helper-function` and
 `rust-add-documentation-comments` send mutable `.rs` files to the local model
 with Rust-specific prompt context. TypeScript documentation work is also
 available through `add-documentation-comments`, which adds JSDoc without
-changing runtime code. When no validation commands are configured and the target
-is inside a Cargo project, the service detects `Cargo.toml` and runs
-`cargo check --all-targets`; if clippy is available it also runs
-`cargo clippy --all-targets -- -D warnings`.
+changing runtime code.
+
+When the effective `validationCommands` list is empty, final validation is delegated to `coding-tooling` with its current complete tier contract:
+
+```sh
+coding-tooling run --tier full --strict --json
+```
+
+The command runs from the selected repository/target context and `coding-tooling` owns repository-root discovery, applicable capability discovery, and full-tier composition. `local-refactor` accepts only a schema-v1 `operation: "run"` envelope whose status matches the documented process exit code. `passed` is the only success status. `failed` means executed repository checks failed and may trigger bounded model repair; `unavailable` and `error`, as well as missing binaries, malformed output, or status/exit mismatches, fail closed without asking the model to change code. A valid JSON envelope is stored unchanged as machine-readable `validationOutput` evidence.
+
+Explicit `validationCommands` are a deliberate compatibility override for the automatic tier. Ordinary non-zero check results are treated as code-validation failures, while command-not-found or shell execution failures are treated as non-repairable tooling failures.
 
 Model-planned rules also receive runtime rule policy before the model is asked
 for a `patch-plan-v1`. The policy is built from the selected refactoring rule,
@@ -117,9 +125,7 @@ Coverage Solidification Run can then create or update test files only, record
 Behavior Claims, run validation, and preserve the same patch journal, review,
 diff, and revert lifecycle as normal runs.
 
-Coverage solidification requires validation commands. If none are configured or
-detected, the service rejects the run instead of treating skipped validation as
-success. Production source files are read-only during coverage solidification.
+Coverage solidification uses the same final validation boundary as normal runs: explicit `validationCommands` when configured, otherwise the strict `coding-tooling` full tier. Missing or unavailable validation fails the run instead of being treated as successful skipped validation. Production source files are read-only during coverage solidification.
 
 Preview coverage evidence:
 
@@ -151,6 +157,8 @@ POST /api/coverage/runs
   "coverageEvidence": []
 }
 ```
+
+Omit `validationCommands` in the request when the repository should use automatic `coding-tooling` validation.
 
 ## Configuration
 
@@ -187,7 +195,7 @@ validationCommands = ["bun test", "bun run typecheck"]
 testFileMode = "readOnly"
 ```
 
-Run settings from the web UI override global and project settings.
+Run settings from the web UI override global and project settings. If the effective `validationCommands` list is empty, the service uses the automatic strict `coding-tooling` full tier instead of guessing local package or Cargo commands.
 
 Project convention settings can also define deterministic formatter and ordering
 behavior. The browser UI exposes a separate Conventions page for a selected
@@ -347,7 +355,7 @@ Run-supported rules execute in one of two ways. Narrow, syntax-local TypeScript
 rules run through the TypeScript analyzer worker. Broader extraction, multi-file,
 documentation, and Rust rules request a local model `patch-plan-v1`, validate
 the plan against mutable scope, protected paths, and write mode, then write
-through the patch journal before running validation commands.
+through the patch journal before final validation.
 
 Catalog metadata is mirrored in the compiled runtime rule definitions. The
 catalog check fails if fields such as planning profile, safety level, preserved

@@ -496,6 +496,12 @@ async fn attempt_repairs(
         if validation_result.success {
             return Ok(true);
         }
+        if !validation_result.retryable {
+            return Err(anyhow!(
+                "validation became non-repairable during model repair: {}",
+                validation_result.output.trim()
+            ));
+        }
         validation_output = validation_result.output;
     }
 
