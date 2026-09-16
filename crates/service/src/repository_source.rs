@@ -616,7 +616,7 @@ fn repository_file_preview_response(
 ) -> Result<RepositoryFilePreviewResponse, FilePreviewError> {
     let repository = db
         .get_repository(repository_id)
-        .map_err(|error| FilePreviewError::Internal(error.into()))?
+        .map_err(FilePreviewError::Internal)?
         .ok_or(FilePreviewError::NotFound)?;
     let root = std::fs::canonicalize(&repository.root_path)
         .map_err(|error| FilePreviewError::BadRequest(error.into()))?;

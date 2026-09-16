@@ -505,6 +505,7 @@ async fn attempt_repairs(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_model_planned_rule(
     state: &ServiceState,
     id: &str,

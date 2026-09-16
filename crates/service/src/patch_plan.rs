@@ -596,7 +596,7 @@ fn code_without_comments(language: Language, value: &str) -> String {
         match character {
             '/' if chars.peek() == Some(&'/') => {
                 chars.next();
-                while let Some(comment_character) = chars.next() {
+                for comment_character in chars.by_ref() {
                     if comment_character == '\n' {
                         output.push('\n');
                         break;
