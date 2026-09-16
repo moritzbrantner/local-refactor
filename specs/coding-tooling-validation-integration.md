@@ -48,7 +48,7 @@ Interpretation:
 | `unavailable` | required capability/tooling is unavailable | no |
 | `error` | tooling/config/environment error | no |
 
-Missing binaries, malformed JSON, unsupported schema versions, wrong operations, status/exit-code mismatches, and explicit-command execution failures are fail-closed and non-repairable.
+Missing binaries, malformed JSON, unsupported schema versions, wrong operations, status/exit-code mismatches, and explicit-command startup/command-not-found failures are fail-closed and non-repairable.
 
 ## Acceptance criteria
 
@@ -61,7 +61,3 @@ Missing binaries, malformed JSON, unsupported schema versions, wrong operations,
 - Deterministic and model-planned runs share the same final validation selection and rollback semantics.
 - Coverage solidification can use the same automatic validation path when no explicit override is present.
 - Focused validation tests and the repository verification workflow pass on the exact PR head.
-
-## Review checkpoint
-
-Status: IN PROGRESS — implementation restacked onto current `main`; exact-head verification and final review remain.
