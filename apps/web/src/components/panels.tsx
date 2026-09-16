@@ -874,14 +874,18 @@ export function RunReviewPanel({ draft, rules, onCancel, onConfirm }: RunReviewP
         {draft.validationCommands.length > 0 ? (
           <ul>{draft.validationCommands.map((command) => <li key={command}>{command}</li>)}</ul>
         ) : (
-          <p>No custom validation commands were entered.</p>
+          <>
+            <p>No custom validation commands were entered.</p>
+            <p>
+              Automatic validation uses the <code>coding-tooling</code> full tier in strict mode and may
+              execute repository-discovered checks on this machine.
+            </p>
+          </>
         )}
-        {(draft.validationCommands.length > 0 || draft.usesModelPlannedRules) && (
-          <p>
-            Confirm only for repositories and commands you trust; validation runs on this machine
-            through the local shell.
-          </p>
-        )}
+        <p>
+          Confirm only for repositories and validation tooling you trust; validation runs on this
+          machine through the local shell and may execute repository-defined commands.
+        </p>
       </section>
       <div className="review-actions">
         <button className="secondary" type="button" onClick={onCancel}>

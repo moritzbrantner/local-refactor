@@ -2,7 +2,7 @@
 
 Use a small Architecture Decision Record (ADR) when a decision is consequential, difficult to reverse, likely to be questioned later, or important for a fresh agent to understand. Do not create ADRs for routine implementation choices, and do not retroactively manufacture rationale for existing decisions.
 
-Number new records sequentially using `NNNN-short-title.md`. The next available number is `0012`. Link superseding and superseded records in both directions when practical.
+Number new records sequentially using `NNNN-short-title.md`. The next available number is `0013`. Link superseding and superseded records in both directions when practical.
 
 ## Existing decisions
 
@@ -17,6 +17,7 @@ Number new records sequentially using `NNNN-short-title.md`. The next available 
 - [0009: Hybrid deterministic convention rules](0009-hybrid-deterministic-convention-rules.md)
 - [0010: Test refactoring rules](0010-test-refactoring-rules.md)
 - [0011: Coverage Solidification Runs precede Refactoring Runs](0011-coverage-solidification-runs.md)
+- [0012: coding-tooling owns automatic validation execution](0012-coding-tooling-owns-automatic-validation.md)
 
 Existing ADRs are concise decision statements and may predate the template below. Preserve them as historical records.
 

@@ -1,5 +1,6 @@
 use crate::{
-    edit_journal, model_provider, patch_plan, run_intake, run_status::RunStatus, validation,
+    edit_journal, model_provider, patch_plan, repository_tooling, run_intake,
+    run_status::RunStatus, validation,
     RunCreateRequest, RunKind, RunMetrics, ServiceState,
 };
 use anyhow::{anyhow, Context, Result};
@@ -145,11 +146,6 @@ fn normalize_coverage_run(
     mut run: RunCreateRequest,
 ) -> Result<RunCreateRequest> {
     run = normalize_coverage_base(state, run)?;
-    if run.validation_commands.is_empty() {
-        return Err(anyhow!(
-            "coverage solidification requires validation commands"
-        ));
-    }
     if run.coverage_evidence.is_empty() {
         let target_path = run_intake::request_target_path(&run)?;
         let target_root = canonical_target_root(Path::new(target_path))?;
@@ -538,8 +534,11 @@ async fn run_validation(
     )?;
     let validation_dir = run_intake::validation_root(run_intake::request_target_path(request)?);
     let started = Instant::now();
-    let validation_result =
-        validation::run_commands(&validation_dir, &request.validation_commands).await?;
+    let validation_result = if request.validation_commands.is_empty() {
+        repository_tooling::run_final_gate(&validation_dir).await?
+    } else {
+        validation::run_commands(&validation_dir, &request.validation_commands).await?
+    };
     add_elapsed_ms(&mut metrics.validation_ms, started);
     state
         .db
