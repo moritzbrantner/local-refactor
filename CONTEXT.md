@@ -1,6 +1,23 @@
 # local-refactor
 
-local-refactor is a local autonomous refactoring service. Its language distinguishes behavior-preserving refactoring from more general code generation or cleanup.
+local-refactor is a local semantic formatter/refactoring normalizer for working code. It brings code toward a repository's preferred form while preserving intended behavior, and it deliberately stays between deterministic formatting/linting and a full coding agent.
+
+## Product boundary
+
+```text
+formatter / linter
+  deterministic, syntax-level
+        ↓
+local-refactor
+  semantic, low-risk, behavior-preserving cleanup
+        ↓
+full coding agent
+  bugs, features, architecture, ambiguous design work
+```
+
+Feature implementation, bug fixing, migrations, architectural redesign, and open-ended implementation are outside local-refactor's product boundary. When a desired cleanup requires one of those, the system should report the work as out of scope rather than broaden the refactoring task.
+
+Reliable deterministic transformations are preferred. The local model is reserved for bounded semantic refactorings that require limited judgment and still fit a cataloged rule with explicit safety constraints.
 
 ## Language
 
@@ -45,8 +62,8 @@ A side-effect-free, whole-run preview of concrete edits produced by deterministi
 _Avoid_: Candidate File Preview, dry run, predicted edits
 
 **Convention Settings**:
-Machine-readable formatter and ordering preferences used by deterministic convention Refactoring Rules.
-_Avoid_: Style guide, lint preferences
+Machine-readable formatter and ordering preferences used by deterministic convention Refactoring Rules. These local settings are not the shared `coding-agent-conventions` engineering policy.
+_Avoid_: Shared engineering conventions, style guide
 
 **Convention Layer**:
 Project configuration plus local Repository Source override, merged to produce effective Convention Settings for a Run.
@@ -57,15 +74,15 @@ A recorded reason explaining why a Refactoring Rule was selected, such as config
 _Avoid_: Heuristic log
 
 **Run**:
-One autonomous refactoring attempt over an explicit target scope, selected rules, model settings, and validation policy.
-_Avoid_: Job, task
+One bounded refactoring attempt over an explicit target scope, selected rules, model settings, and validation policy.
+_Avoid_: Generic coding-agent job, open-ended task
 
 **Mutable Scope**:
-The selected file or directory subtree that the agent may modify by default.
+The selected file or directory subtree that the refactoring may modify by default.
 _Avoid_: Workspace, project
 
 **Read-Only Scope**:
-Files outside the mutable scope that the agent may inspect but not modify unless explicitly included.
+Files outside the mutable scope that the refactoring may inspect but not modify unless explicitly included.
 _Avoid_: Context files
 
 **Repository Source**:
@@ -89,8 +106,8 @@ The rollback record storing original file content before every write.
 _Avoid_: Backup
 
 **Validation Check**:
-A configured command used to verify that a run preserved behavior.
-_Avoid_: Test command
+A required verification step used to provide evidence that a run preserved behavior.
+_Avoid_: Best-effort test command
 
 **Coverage Solidification Run**:
 A tests-only run that adds or strengthens behavior coverage before a later Refactoring Run. Production code is read-only during this run.
@@ -114,7 +131,9 @@ _Avoid_: Coverage percentage, assertion note
 
 ## Purpose
 
-`local-refactor` is a localhost-only autonomous refactoring service. It gives a user a browser workflow for selecting a local repository scope, choosing behavior-preserving Refactoring Rules, previewing eligible or deterministic edits, running validation, reviewing diffs, and reverting the service's own writes.
+`local-refactor` takes working code and moves it toward the repository's preferred form without intentionally changing behavior. It provides a localhost-only browser workflow for selecting a repository scope, choosing bounded Refactoring Rules, previewing eligible or deterministic edits, applying deterministic or local-model transformations, validating the result, reviewing diffs, and reverting its own writes.
+
+The product is not a generic coding agent. It does not own feature stories, bug repair, migrations, architectural redesign, or open-ended planning/execution. Shared `coding-agent-conventions` and repository-local instructions are consumed as policy inputs rather than copied into local-refactor as authoritative configuration.
 
 ## Architecture
 
@@ -126,9 +145,12 @@ _Avoid_: Coverage percentage, assertion note
 
 ## Important invariants
 
-- A Refactoring preserves behavior; behavior changes, general rewrites, and migrations are outside that term.
+- Behavior preservation is the hard product invariant. Behavior changes, feature work, bug fixing, migrations, and architecture changes are outside the refactoring boundary.
+- Refactorings remain cataloged and bounded; there is no generic free-form coding-agent task contract.
+- Prefer deterministic execution whenever a reliable algorithm exists; use the local model only when limited semantic judgment is required.
 - Mutable Scope, Read-Only Scope, Protected Paths, and Test File Mode constrain every Run.
 - The service records original content in the Patch Journal before each write and reverts its own writes after validation failure.
+- Missing, unavailable, or broken required validation cannot be treated as successful skipped validation.
 - A Candidate File Preview reports eligibility, not predicted edits. A Deterministic Preview is side-effect free and contains concrete edits.
 - Applying a Deterministic Preview recomputes it and verifies its fingerprint before writing.
 - Coverage Solidification Runs may write tests only, require validation, and keep production source read-only.
@@ -145,7 +167,7 @@ Do not infer rationale that is absent from an ADR. Propose a new ADR for a conse
 - Supported development tooling is Rust 1.96+ and Bun 1.3+.
 - JavaScript package operations use `bun` or `bunx`; this repository does not use npm, npx, pnpm, or Yarn.
 - The product is localhost-only. Model-backed checks require a reachable Ollama instance and an installed local model.
-- Agent work is local-first. Remote Git or issue-tracker mutations require explicit user authorization.
+- Shared engineering conventions remain authoritative outside this repository; local convention rewrite/format/order settings are product configuration, not a replacement for `coding-agent-conventions`.
 
 ## Development commands
 
@@ -189,7 +211,7 @@ Tests follow the behavior ownership matrix in `docs/testing-strategy.md`: Rust c
 
 ## Current work
 
-No feature-specific work is designated in this file. Durable feature intent belongs in an authorized GitHub PRD issue or a local file under `specs/`; slice progress and verification evidence belong under `tasks/`. Always inspect `git status` before continuing work.
+No feature-specific work is designated in this file. Durable feature intent belongs in GitHub issues or focused specifications under `specs/`; verification evidence belongs with the corresponding change. Keep product work inside the semantic-formatter boundary above.
 
 ## Open questions
 
