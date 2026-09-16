@@ -3,7 +3,7 @@ name: Check
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Run actionlint
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color .github/workflows/*.yml
@@ -86,10 +86,14 @@ jobs:
     uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@workflow-standard-v1.3
     with:
       node_version: ""
-      pre_command: bun run --cwd apps/web playwright install --with-deps chromium
+      pre_command: |
+        cargo build -p local-refactor-service
+        bun run --cwd apps/web playwright install --with-deps chromium
       build_command: bun run --cwd apps/web build
       e2e_command: bun run --cwd apps/web test:e2e
       install_playwright: false
+      cache_cargo: true
+      cargo_cache_dependency_path: Cargo.lock
       artifact_paths: |
         apps/web/playwright-report
         apps/web/test-results

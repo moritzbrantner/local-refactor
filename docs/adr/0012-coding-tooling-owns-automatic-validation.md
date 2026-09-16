@@ -1,40 +1,42 @@
-# ADR-0012: coding-tooling owns automatic validation execution
+# ADR 0012: coding-tooling owns automatic validation
 
-## Status
-
-Proposed
+Status: Accepted
 
 ## Context
 
-local-refactor currently discovers package and Cargo commands itself, runs them through a shell, and treats an empty command list as successful skipped validation. That duplicates deterministic repository discovery, conflates unavailable tooling with passing validation, and makes a behavior-preserving refactor appear successful without an applicable gate.
+`local-refactor` must prove that a behavior-preserving refactor still satisfies the repository's required checks. Historically the service guessed validation commands from nearby `package.json` or `Cargo.toml` files. That duplicates repository/tooling knowledge, drifts from shared conventions, and cannot reliably distinguish a code failure from missing or broken validation infrastructure.
 
-The separate coding-tooling repository defines a stable, deterministic JSON process contract for repository inspection and validation capabilities. local-refactor must preserve its own ownership of rule selection, model planning, path policy, patch journaling, rollback, run history, and repair lifecycle.
+`coding-tooling` is the shared deterministic checks layer. Its current schema-v1 CLI contract exposes semantic capabilities and tier execution. The complete repository validation boundary is `coding-tooling run --tier full --strict --json`.
 
 ## Decision
 
-When a run has no explicit legacy validation commands, local-refactor invokes:
+When a run has no explicit `validationCommands`, `local-refactor` delegates final validation to `coding-tooling` by running:
 
-```text
-coding-tooling check gate:final --root <target> --json
+```sh
+coding-tooling run --tier full --strict --json
 ```
 
-The integration is a Rust subprocess adapter, not a source dependency. It validates schema version 1, operation `check`, status, and exit-code consistency.
+from the selected repository/target context. `coding-tooling` resolves the repository root and owns capability discovery, tier composition, required/optional capability policy, command execution, and the JSON result envelope.
 
-A `passed` result completes validation. A `failed` result may enter the existing bounded model-repair flow. `unavailable`, `error`, malformed output, and process-start failures fail the run without model repair. All failures retain the existing patch-journal rollback behavior.
+`local-refactor` validates the integration boundary before trusting the result:
 
-Explicit `validationCommands` remain as a compatibility override. The executable defaults to `coding-tooling` and may be overridden with `LOCAL_REFACTOR_CODING_TOOLING_BIN`.
+- `schemaVersion` must be `1`;
+- `operation` must be `run`;
+- the documented status/exit-code mapping must match exactly: `passed`/0, `failed`/1, `unavailable`/2, `error`/3.
 
-## Alternatives considered
+Only `passed` is successful validation. A valid `failed` result means repository code checks ran and failed; for a model-planned refactor this may consume the bounded model-repair budget. `unavailable` and `error` are tooling/environment failures and must not prompt the model to change code. Missing executables, malformed JSON, unsupported schema versions, wrong operations, and status/exit mismatches are also non-repairable validation failures.
 
-- Keep automatic discovery in local-refactor. Rejected because it duplicates coding-tooling and preserves inconsistent status semantics.
-- Link coding-tooling as a Rust library. Rejected because the CLI is implemented in TypeScript/Bun and the process/JSON boundary keeps the repositories independently releasable.
-- Silently fall back to guessed commands when coding-tooling is unavailable. Rejected because it changes the validation contract without evidence and can turn an unavailable gate into a false success.
-- Run affected-scope checks only. Rejected as the final validation path because affected selection is early feedback, not permission to skip the complete applicable gate.
+Valid `coding-tooling` JSON is stored unchanged in the run's existing `validationOutput`, providing machine-readable validation evidence without introducing a second persistence model. Human-readable integration errors use the same field.
+
+Explicit `validationCommands` remain supported as deliberate repository/user compatibility overrides. They bypass the automatic tier for that run. Shell command-not-found/execute failures are treated as tooling failures rather than model-repairable code failures.
+
+Every unsuccessful validation result still follows the existing patch-journal rollback boundary. Deterministic runs, model-planned runs, and coverage-solidification runs use the same automatic-vs-explicit selection semantics.
 
 ## Consequences
 
-- coding-tooling becomes a local runtime requirement for automatic validation.
-- Repositories need to declare a complete `check` script to expose `gate:final`.
-- local-refactor no longer guesses package-manager or Cargo validation commands.
-- Existing explicit shell commands continue to work during migration.
-- Structured validation evidence is currently persisted as JSON text in the existing validation output; first-class database columns can be added separately.
+- `local-refactor` no longer guesses package-manager or Cargo validation commands.
+- Repository validation policy remains authoritative in `coding-tooling` and its repository configuration rather than being copied into this service.
+- Automatic runs require a compatible `coding-tooling` executable when no explicit override is supplied; `LOCAL_REFACTOR_CODING_TOOLING_BIN` may point to a specific executable.
+- Missing required capabilities fail closed under `--strict` instead of being reported as successful skipped validation.
+- Model repair is reserved for executed code-validation failures, not tooling or environment repair.
+- The integration is intentionally pinned to the stable schema/status contract rather than implementation-specific check names such as the obsolete `gate:final` capability.

@@ -18,7 +18,6 @@ test("full stack deterministic run can be previewed, applied, reviewed, and reve
   page,
   request,
 }) => {
-  test.setTimeout(180_000);
   const workspace = mkdtempSync(join(tmpdir(), "local-refactor-e2e-"));
   const fixtureRepo = join(workspace, "repo");
   const dbPath = join(workspace, "local-refactor.sqlite");
@@ -108,7 +107,7 @@ async function waitForService(service: ChildProcessWithoutNullStreams) {
     stderr += chunk.toString();
   });
 
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (service.exitCode !== null) {
       throw new Error(`service exited early with ${service.exitCode}\n${stderr}`);

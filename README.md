@@ -1,20 +1,30 @@
 # local-refactor
 
-local-refactor is a localhost-only refactoring service with a browser UI. The current implementation is an MVP of the planned architecture:
+local-refactor is a localhost-only semantic formatter/refactoring normalizer that takes working code and moves it toward a repository's preferred form without intentionally changing behavior.
 
-- Rust service on `127.0.0.1:7373`
-- React/Vite web UI on `127.0.0.1:5173`
-- SQLite run history and patch journal
-- TypeScript analyzer worker run through Bun
-- model-planned TypeScript and Rust refactoring rules
-- Ollama-backed local coding model selection at `/api/models`
-- deterministic TypeScript refactoring preview and apply without an LLM
+It combines a Rust service, React/Vite browser UI, SQLite run history and patch journal, a Bun TypeScript analyzer worker, deterministic refactoring executors, and bounded local-model refactoring through Ollama.
+
+## Product boundary
+
+```text
+formatter / linter
+  deterministic, syntax-level
+        ↓
+local-refactor
+  semantic, low-risk, behavior-preserving cleanup
+        ↓
+full coding agent
+  bugs, features, architecture, ambiguous design work
+```
+
+Behavior preservation is the hard invariant. Refactorings remain cataloged and bounded rather than becoming free-form coding-agent tasks. Prefer deterministic execution whenever a reliable algorithm exists; use the local model only for narrow semantic transformations that require limited judgment.
+
+Feature implementation, bug fixing, migrations, architectural redesign, and open-ended implementation are outside local-refactor's product boundary. Shared `coding-agent-conventions` and repository-local instructions are policy inputs; local-refactor consumes them rather than becoming their source of truth.
 
 ## Requirements
 
 - Rust 1.96+
 - Bun 1.3+
-- `coding-tooling` 0.1+ on `PATH` (or set `LOCAL_REFACTOR_CODING_TOOLING_BIN` to its executable)
 - Ollama at `http://127.0.0.1:11434` unless `OLLAMA_BASE_URL` is set. Runs can select `qwen2.5-coder:7b` or `deepseek-coder:6.7b`; the service asks Ollama to download the selected model before each run if it is missing.
 
 ## Install
@@ -84,17 +94,10 @@ Rust support is model-planned. `rust-extract-helper-function` and
 `rust-add-documentation-comments` send mutable `.rs` files to the local model
 with Rust-specific prompt context. TypeScript documentation work is also
 available through `add-documentation-comments`, which adds JSDoc without
-changing runtime code.
-
-When no explicit validation commands are configured, the service invokes
-`coding-tooling check gate:final --root <target> --json`. The tooling process
-resolves the repository root and runs only a repository-declared complete gate.
-A missing binary, unavailable final gate, malformed envelope, or tooling error
-fails the run and reverts local-refactor's journaled writes; it is never treated
-as successful skipped validation. A failing gate remains eligible for the
-existing bounded model-repair flow, while unavailable or broken tooling does
-not trigger model repair. Explicit `validationCommands` remain available as a
-legacy override.
+changing runtime code. When no validation commands are configured and the target
+is inside a Cargo project, the service detects `Cargo.toml` and runs
+`cargo check --all-targets`; if clippy is available it also runs
+`cargo clippy --all-targets -- -D warnings`.
 
 Model-planned rules also receive runtime rule policy before the model is asked
 for a `patch-plan-v1`. The policy is built from the selected refactoring rule,
@@ -114,10 +117,9 @@ Coverage Solidification Run can then create or update test files only, record
 Behavior Claims, run validation, and preserve the same patch journal, review,
 diff, and revert lifecycle as normal runs.
 
-Coverage solidification requires either explicit validation commands or an
-available `coding-tooling` final gate. If neither is available, the service
-rejects the run instead of treating skipped validation as success. Production
-source files are read-only during coverage solidification.
+Coverage solidification requires validation commands. If none are configured or
+detected, the service rejects the run instead of treating skipped validation as
+success. Production source files are read-only during coverage solidification.
 
 Preview coverage evidence:
 
@@ -185,9 +187,7 @@ validationCommands = ["bun test", "bun run typecheck"]
 testFileMode = "readOnly"
 ```
 
-Run settings from the web UI override global and project settings. If the
-effective `validationCommands` list is empty, validation uses the
-`coding-tooling` final-gate contract described above.
+Run settings from the web UI override global and project settings.
 
 Project convention settings can also define deterministic formatter and ordering
 behavior. The browser UI exposes a separate Conventions page for a selected
@@ -195,6 +195,8 @@ Repository Source; project config is the reproducible baseline, and local UI
 overrides are stored in local-refactor's SQLite database for that Repository
 Source. Applied deterministic runs store the effective convention snapshot used
 for their preview fingerprint.
+
+These local Convention Settings are product configuration for rewrite/format/order behavior. They are distinct from shared engineering policy such as `coding-agent-conventions`, which remains an external policy input.
 
 ```toml
 [conventions]

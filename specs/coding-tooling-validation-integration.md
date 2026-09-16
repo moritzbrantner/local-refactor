@@ -1,53 +1,67 @@
 # coding-tooling validation integration
 
-## Requirement
+## Goal
 
-Make local-refactor use coding-tooling for deterministic repository validation without moving refactoring policy, model orchestration, write ownership, or rollback into coding-tooling.
+Make repository validation a single fail-closed safety boundary shared by deterministic refactors, local-model refactors, and coverage solidification, while leaving repository check discovery and composition authoritative in `coding-tooling`.
 
 ## Scope
 
-- add a typed subprocess adapter for the coding-tooling schema-version-1 JSON envelope;
-- use `gate:final` when no explicit validation commands are configured;
-- preserve explicit validation commands as a legacy override;
-- distinguish product-code failures that may be model-repaired from unavailable or broken tooling;
-- retain patch-journal rollback on every validation failure;
-- remove local automatic package/Cargo command guessing;
-- document installation and the executable override.
+- Remove local package/Cargo command guessing from automatic validation.
+- Keep explicit `validationCommands` as deliberate repository/user overrides.
+- When no explicit override exists, run the current `coding-tooling` complete tier contract: `run --tier full --strict --json`.
+- Validate schema version, operation, status, and exit-code consistency before trusting tooling output.
+- Distinguish executed code-check failure (`failed`) from missing/broken tooling (`unavailable`/`error` or integration failure).
+- Permit bounded model repair only for code-check failures.
+- Preserve patch-journal rollback for every unsuccessful final validation.
+- Persist a valid coding-tooling schema-v1 envelope as machine-readable validation evidence in the existing `validationOutput` field.
+- Apply the same automatic-vs-explicit semantics to coverage-solidification runs.
 
 ## Non-goals
 
-- worktree or agent lifecycle orchestration;
-- selecting rules from coding-tooling affected output;
-- moving analyzers, model planning, path policy, patch journaling, or run history;
-- database migration for structured evidence;
-- replacing explicit validation commands in existing stored requests.
+- Reimplement capability discovery or tier policy inside `local-refactor`.
+- Add a second validation configuration language.
+- Teach the local model to repair toolchains, package installation, missing capabilities, or CI environments.
+- Depend on implementation-specific historical capabilities such as `gate:final`.
+- Introduce a new database schema solely for the coding-tooling envelope; the existing validation evidence field is sufficient for this slice.
 
-## Invariants
+## Contract
 
-1. Empty validation configuration never means success.
-2. Only a coding-tooling `passed` envelope with a successful process exit passes the automatic gate.
-3. A coding-tooling status/exit-code mismatch is an integration error.
-4. Tooling unavailability cannot consume model repair budget.
-5. Validation failure still reverts all journaled writes owned by the run.
-6. No fallback changes the validation contract silently.
+Automatic validation invokes, from the selected repository/target context:
+
+```sh
+coding-tooling run --tier full --strict --json
+```
+
+A trusted result must have:
+
+- `schemaVersion: 1`;
+- `operation: "run"`;
+- one of `passed`, `failed`, `unavailable`, `error`;
+- the matching process exit code: 0, 1, 2, or 3 respectively.
+
+Interpretation:
+
+| Status | Meaning for local-refactor | Model repair |
+| --- | --- | --- |
+| `passed` | validation succeeded | no |
+| `failed` | repository code/check execution failed | allowed within configured budget |
+| `unavailable` | required capability/tooling is unavailable | no |
+| `error` | tooling/config/environment error | no |
+
+Missing binaries, malformed JSON, unsupported schema versions, wrong operations, status/exit-code mismatches, and explicit-command execution failures are fail-closed and non-repairable.
 
 ## Acceptance criteria
 
-- a passing `gate:final` envelope succeeds;
-- a failed envelope is marked retryable;
-- an unavailable envelope is non-retryable;
-- a missing executable, malformed JSON, unsupported schema, wrong operation, or exit mismatch fails;
-- explicit validation commands still run through the existing legacy path;
-- local-refactor itself has no explicit project validation command and therefore dogfoods the automatic final gate;
-- README and ADR describe the dependency and responsibility boundary.
+- Automatic validation uses `coding-tooling run --tier full --strict --json`; no `gate:final` assumptions remain.
+- A valid `passed` envelope is the only automatic success path.
+- `failed` and tooling/environment failure classes remain distinguishable at the local-refactor boundary.
+- Missing required capabilities cannot become successful skipped validation.
+- Valid automatic validation envelopes are retained as machine-readable run evidence.
+- Explicit validation commands continue to work as an intentional override.
+- Deterministic and model-planned runs share the same final validation selection and rollback semantics.
+- Coverage solidification can use the same automatic validation path when no explicit override is present.
+- Focused validation tests and the repository verification workflow pass on the exact PR head.
 
-## Verification plan
+## Review checkpoint
 
-- focused Rust unit tests for failed and unavailable envelopes;
-- existing validation tests for empty legacy commands;
-- full `bun run check` after coding-tooling PR #2 is installed on the validation environment;
-- final diff review against this specification.
-
-## Review status
-
-BLOCKED pending the full repository gate in CI; focused implementation review complete.
+Status: IN PROGRESS — implementation restacked onto current `main`; exact-head verification and final review remain.
