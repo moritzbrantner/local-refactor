@@ -186,7 +186,7 @@ pub fn build_prompt(request: &PatchPlanModelRequest) -> String {
     }
     if request.validation_commands.is_empty() {
         parts.push(
-            "No validation commands were provided; keep the plan limited to changes that can be reasoned about from static source inspection and the rule policy."
+            "No explicit validation commands were provided. Set validationCommand to an empty string; final validation is supplied automatically by coding-tooling. Keep the plan limited to changes that can be reasoned about from static source inspection and the rule policy."
                 .to_string(),
         );
     }
@@ -214,11 +214,15 @@ fn build_coverage_prompt(request: &PatchPlanModelRequest) -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    [
+    let validation_command = request.validation_commands.join(" && ");
+    let mut parts = vec![
         "You are a local coverage solidification assistant.".to_string(),
         "Return only valid JSON. Do not use Markdown fences outside JSON strings.".to_string(),
         "The response must match coverage-patch-plan-v1 exactly:".to_string(),
-        r#"{"summary":"short summary","files":[{"path":"src/example.test.ts","action":"create","content":"complete test file"}],"behaviorClaims":[{"id":"claim-id","evidenceId":"evidence-id","sourcePaths":["src/example.ts"],"publicEntrypoint":"example","behavior":"observable behavior","owningTestLayer":"TypeScript unit test","testPath":"src/example.test.ts","assertionSummary":"asserts observable behavior","existingCoverageReason":"no nearby coverage"}],"validationCommand":"test command"}"#.to_string(),
+        format!(
+            r#"{{"summary":"short summary","files":[{{"path":"src/example.test.ts","action":"create","content":"complete test file"}}],"behaviorClaims":[{{"id":"claim-id","evidenceId":"evidence-id","sourcePaths":["src/example.ts"],"publicEntrypoint":"example","behavior":"observable behavior","owningTestLayer":"TypeScript unit test","testPath":"src/example.test.ts","assertionSummary":"asserts observable behavior","existingCoverageReason":"no nearby coverage"}}],"validationCommand":"{}"}}"#,
+            validation_command
+        ),
         "Use exactly these top-level keys: summary, files, behaviorClaims, validationCommand.".to_string(),
         "If no safe coverage improvement is available, return files: [] and behaviorClaims: [].".to_string(),
         format!("Language: {}", request.language.display_name()),
@@ -227,7 +231,11 @@ fn build_coverage_prompt(request: &PatchPlanModelRequest) -> String {
         format!("Rule description: {}", request.rule_description),
         format!(
             "Validation commands: {}",
-            request.validation_commands.join(" && ")
+            if request.validation_commands.is_empty() {
+                "none".to_string()
+            } else {
+                validation_command
+            }
         ),
         format_policy_section("Workflow rules", &request.planning_context.workflow_rules),
         format_policy_section(
@@ -246,8 +254,14 @@ fn build_coverage_prompt(request: &PatchPlanModelRequest) -> String {
         "Production files are read-only context. Create or update test files only.".to_string(),
         "Current source and test context files:".to_string(),
         files,
-    ]
-    .join("\n\n")
+    ];
+    if request.validation_commands.is_empty() {
+        parts.push(
+            "No explicit validation commands were provided. Set validationCommand to an empty string; final validation is supplied automatically by coding-tooling."
+                .to_string(),
+        );
+    }
+    parts.join("\n\n")
 }
 
 fn format_policy_section(title: &str, rules: &[String]) -> String {
@@ -280,7 +294,7 @@ pub(crate) fn parse_patch_plan_response(
         serde_json::from_str(response).with_context(|| "patch plan response was not valid JSON")?;
     let plan: PatchPlanV1 = serde_json::from_value(value.clone())
         .map_err(|error| patch_plan_shape_error(&value, error))?;
-    validate_plan_shape(&plan)?;
+    validate_plan_shape(request, &plan)?;
     validate_allowed_writes(request.allowed_writes, &plan)?;
 
     let sources = request
@@ -369,7 +383,7 @@ pub(crate) fn parse_coverage_patch_plan_response(
         .with_context(|| "coverage patch plan response was not valid JSON")?;
     let plan: CoveragePatchPlanV1 = serde_json::from_value(value.clone())
         .map_err(|error| patch_plan_shape_error(&value, error))?;
-    validate_coverage_plan_shape(&plan)?;
+    validate_coverage_plan_shape(request, &plan)?;
 
     let evidence_ids = request
         .coverage_evidence
@@ -467,13 +481,16 @@ pub(crate) fn parse_coverage_patch_plan_response(
     Ok((edits, plan.behavior_claims))
 }
 
-fn validate_coverage_plan_shape(plan: &CoveragePatchPlanV1) -> Result<()> {
+fn validate_coverage_plan_shape(
+    request: &PatchPlanModelRequest,
+    plan: &CoveragePatchPlanV1,
+) -> Result<()> {
     if plan.summary.trim().is_empty() {
         return Err(anyhow!("coverage patch plan summary must be non-empty"));
     }
-    if plan.validation_command.trim().is_empty() {
+    if !request.validation_commands.is_empty() && plan.validation_command.trim().is_empty() {
         return Err(anyhow!(
-            "coverage patch plan validationCommand must be non-empty"
+            "coverage patch plan validationCommand must be non-empty when explicit validation commands are configured"
         ));
     }
     if !plan.files.is_empty() && plan.behavior_claims.is_empty() {
@@ -502,12 +519,14 @@ fn reject_weakened_test_markers(path: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_plan_shape(plan: &PatchPlanV1) -> Result<()> {
+fn validate_plan_shape(request: &PatchPlanModelRequest, plan: &PatchPlanV1) -> Result<()> {
     if plan.summary.trim().is_empty() {
         return Err(anyhow!("patch plan summary must be non-empty"));
     }
-    if plan.validation_command.trim().is_empty() {
-        return Err(anyhow!("patch plan validationCommand must be non-empty"));
+    if !request.validation_commands.is_empty() && plan.validation_command.trim().is_empty() {
+        return Err(anyhow!(
+            "patch plan validationCommand must be non-empty when explicit validation commands are configured"
+        ));
     }
     let _ = &plan.preserved_exports;
     Ok(())
@@ -801,6 +820,58 @@ mod tests {
     }
 
     #[test]
+    fn automatic_validation_accepts_empty_patch_plan_validation_command() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let mut request = request(
+            dir.path().to_path_buf(),
+            "",
+            AllowedWrites::SingleFile,
+        );
+        request.validation_commands.clear();
+        let response = r#"{"summary":"No safe change","files":[],"preservedExports":[],"validationCommand":""}"#;
+
+        let edits = parse_patch_plan_response(&request, &policy, response).unwrap();
+
+        assert!(edits.is_empty());
+        assert!(build_prompt(&request).contains("Set validationCommand to an empty string"));
+    }
+
+    #[test]
+    fn explicit_validation_still_requires_patch_plan_validation_command() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let response = r#"{"summary":"No safe change","files":[],"preservedExports":[],"validationCommand":""}"#;
+
+        let error = parse_patch_plan_response(
+            &request(dir.path().to_path_buf(), "", AllowedWrites::SingleFile),
+            &policy,
+            response,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("must be non-empty when explicit validation commands are configured"));
+    }
+
+    #[test]
+    fn automatic_validation_accepts_empty_coverage_validation_command() {
+        let dir = tempdir().unwrap();
+        let policy = PathPolicy::new(dir.path(), &[], TestFileMode::Mutable).unwrap();
+        let mut request = coverage_request(dir.path().to_path_buf());
+        request.validation_commands.clear();
+        let response = r#"{"summary":"No safe coverage change","files":[],"behaviorClaims":[],"validationCommand":""}"#;
+
+        let (edits, claims) =
+            parse_coverage_patch_plan_response(&request, &policy, response).unwrap();
+
+        assert!(edits.is_empty());
+        assert!(claims.is_empty());
+        assert!(build_prompt(&request).contains("Set validationCommand to an empty string"));
+    }
+
+    #[test]
     fn coverage_patch_plan_rejects_production_file_edits() {
         let dir = tempdir().unwrap();
         let source = dir.path().join("src/calculator.ts");
@@ -1082,7 +1153,7 @@ mod tests {
 
         let error = parse_patch_plan_response(&request, &policy, response).unwrap_err();
 
-        assert!(error.to_string().contains("non-mutable path"));
+        assert!(error.to_string().contains("non-mable path"));
     }
 
     #[test]
