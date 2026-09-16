@@ -883,8 +883,8 @@ export function RunReviewPanel({ draft, rules, onCancel, onConfirm }: RunReviewP
           </>
         )}
         <p>
-          Confirm only for repositories and validation tooling you trust; validation may execute
-          repository-defined commands on this machine.
+          Confirm only for repositories and validation tooling you trust; validation runs on this
+          machine through the local shell and may execute repository-defined commands.
         </p>
       </section>
       <div className="review-actions">
