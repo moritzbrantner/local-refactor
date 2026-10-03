@@ -3,6 +3,7 @@ use crate::{
     convention_executor, deterministic_preview,
     edit_journal::{self, JournaledEdit},
     patch_plan::{self, PatchPlanEdit, PatchPlanRepairContext},
+    repository_tooling,
     run_cancellation::RunCancellationToken,
     run_status::RunStatus,
     validation, RunCreateRequest, RunMetrics, ServiceState,
@@ -213,7 +214,7 @@ async fn run_job_inner(
         return Ok(());
     }
 
-    if request.repair_budget > 0 {
+    if validation_result.retryable && request.repair_budget > 0 {
         if let (Some(model), Some(repair_rule)) =
             (model.as_deref(), first_model_planned_rule(&rules))
         {
@@ -495,6 +496,12 @@ async fn attempt_repairs(
         if validation_result.success {
             return Ok(true);
         }
+        if !validation_result.retryable {
+            return Err(anyhow!(
+                "validation became non-repairable during model repair: {}",
+                validation_result.output.trim()
+            ));
+        }
         validation_output = validation_result.output;
     }
 
@@ -610,8 +617,11 @@ async fn run_validation(
     )?;
     let validation_dir = validation_root(request_target_path(request)?);
     let started = Instant::now();
-    let validation_result =
-        validation::run_commands(&validation_dir, &request.validation_commands).await;
+    let validation_result = if request.validation_commands.is_empty() {
+        repository_tooling::run_final_gate(&validation_dir).await
+    } else {
+        validation::run_commands(&validation_dir, &request.validation_commands).await
+    };
     add_elapsed_ms(&mut metrics.validation_ms, started);
     let validation_result = validation_result?;
     state

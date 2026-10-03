@@ -26,6 +26,10 @@ test("full stack deterministic run can be previewed, applied, reviewed, and reve
   try {
     mkdirSync(join(fixtureRepo, "src"), { recursive: true });
     execFileSync("git", ["init", fixtureRepo], { stdio: "ignore" });
+    writeFileSync(
+      join(fixtureRepo, "refactor-rules.toml"),
+      'validationCommands = ["true"]\n',
+    );
     const sample = join(fixtureRepo, "src/sample.ts");
     writeFileSync(
       sample,
