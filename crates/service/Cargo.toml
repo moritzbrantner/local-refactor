@@ -26,5 +26,5 @@ uuid.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
-tempfile = "3.14"
-tower = { version = "0.5", features = ["util"] }
+tempfile = "=3.27.0"
+tower = { version = "=0.5.3", features = ["util"] }

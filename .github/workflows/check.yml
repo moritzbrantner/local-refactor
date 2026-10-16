@@ -31,7 +31,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/fast-validation.yml@workflow-standard-v1.3
+    uses: moritzbrantner/reusable-workflows/.github/workflows/fast-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
       node_version: ""
       pre_command: |
@@ -52,7 +52,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/integration-validation.yml@workflow-standard-v1.3
+    uses: moritzbrantner/reusable-workflows/.github/workflows/integration-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
       node_version: ""
       integration_command: |
@@ -65,7 +65,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/performance-validation.yml@workflow-standard-v1.3
+    uses: moritzbrantner/reusable-workflows/.github/workflows/performance-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
       node_version: ""
       benchmark_command: bun run test:benchmarks
@@ -83,7 +83,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@workflow-standard-v1.3
+    uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
       node_version: ""
       pre_command: |
