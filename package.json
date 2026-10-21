@@ -2,6 +2,7 @@
   "name": "local-refactor",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.3",
   "workspaces": [
     "apps/web",
     "workers/typescript-analyzer"
