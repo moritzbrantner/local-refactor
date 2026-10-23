@@ -33,7 +33,7 @@ jobs:
       packages: read
     uses: moritzbrantner/reusable-workflows/.github/workflows/fast-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
-      bun_version: "1.4.3"
+      bun_version: latest
       node_version: ""
       pre_command: |
         if ! command -v rustup >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ jobs:
       packages: read
     uses: moritzbrantner/reusable-workflows/.github/workflows/integration-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
-      bun_version: "1.4.3"
+      bun_version: latest
       node_version: ""
       integration_command: |
         bun run check:catalog
@@ -69,7 +69,7 @@ jobs:
       packages: read
     uses: moritzbrantner/reusable-workflows/.github/workflows/performance-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
-      bun_version: "1.4.3"
+      bun_version: latest
       node_version: ""
       benchmark_command: bun run test:benchmarks
       bun_cache_dependency_path: bun.lock
@@ -88,7 +88,7 @@ jobs:
       packages: read
     uses: moritzbrantner/reusable-workflows/.github/workflows/e2e-validation.yml@3b15546083e66aeba487a2e653e3ffaacbfe7220 # workflow-standard-v1.3
     with:
-      bun_version: "1.4.3"
+      bun_version: latest
       node_version: ""
       pre_command: |
         cargo build -p local-refactor-service
