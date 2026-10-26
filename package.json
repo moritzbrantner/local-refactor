@@ -2,7 +2,7 @@
   "name": "local-refactor",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "workspaces": [
     "apps/web",
     "workers/typescript-analyzer"
@@ -24,6 +24,6 @@
     "check:local": "bun run check && bun run check:llm"
   },
   "devDependencies": {
-    "@types/bun": "1.4.3"
+    "@types/bun": "1.4.4"
   }
 }
